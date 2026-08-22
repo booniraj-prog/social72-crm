@@ -4,7 +4,7 @@ import { writeAudit } from "@/lib/audit";
 import { prisma } from "@/lib/db";
 import { normalizeMobile } from "@/lib/phone";
 import type { AuthUser } from "@/lib/rbac";
-import { canAssignLeads, leadScopeWhere } from "@/lib/scope";
+import { canAssignLeads, canPickLeads, leadScopeWhere } from "@/lib/scope";
 import { DuplicateLeadError, HttpError } from "@/lib/session";
 
 const TEMPERATURES = ["HOT", "WARM", "COLD", "UNQUALIFIED"] as const;
@@ -167,10 +167,12 @@ export async function listLeads(actor: AuthUser, raw: Record<string, string | un
     const q = filters.q;
     and.push({
       OR: [
-        { fullName: { contains: q, mode: "insensitive" } },
-        { mobileE164: { contains: q.replace(/\s/g, "") } },
-        { email: { contains: q, mode: "insensitive" } },
-        { leadNumber: { contains: q, mode: "insensitive" } },
+            { fullName: { contains: q, mode: "insensitive" } },
+            { mobileE164: { contains: q.replace(/\s/g, "") } },
+            { email: { contains: q, mode: "insensitive" } },
+            { leadNumber: { contains: q, mode: "insensitive" } },
+            { assignedUser: { name: { contains: q, mode: "insensitive" } } },
+            { assignedUser: { email: { contains: q, mode: "insensitive" } } },
       ],
     });
   }
@@ -556,8 +558,79 @@ export async function assignLead(actor: AuthUser, id: string, assignedUserId: st
   return serializeLead(lead as unknown as Record<string, unknown>);
 }
 
-export async function changeStatus(actor: AuthUser, id: string, statusId: string, reason?: string) {
+export async function claimLead(actor: AuthUser, id: string) {
+  if (!canPickLeads(actor)) {
+    throw new HttpError(403, "You cannot pick leads", "FORBIDDEN");
+  }
   const existing = await scopedLead(actor, id);
+  if (existing.assignedUserId && existing.assignedUserId !== actor.id) {
+    throw new HttpError(409, "This lead is already owned by another executive", "ALREADY_ASSIGNED");
+  }
+  if (existing.assignedUserId === actor.id) {
+    return serializeLead(existing as unknown as Record<string, unknown>);
+  }
+
+  const assignedStatus = await prisma.leadStatus.findUniqueOrThrow({ where: { key: "ASSIGNED" } });
+  const firstCall = await prisma.slaRule.findUnique({ where: { key: "first_call" } });
+  const now = new Date();
+
+  const lead = await prisma.$transaction(async (tx) => {
+    const claimed = await tx.lead.updateMany({
+      where: { id, assignedUserId: null, deletedAt: null },
+      data: {
+        assignedUserId: actor.id,
+        assignedAt: now,
+        statusId: existing.status.key === "NEW" ? assignedStatus.id : existing.statusId,
+        slaFirstCallDueAt: new Date(now.getTime() + (firstCall?.thresholdMinutes ?? 10) * 60_000),
+        slaAssignDueAt: null,
+        lastActivityAt: now,
+      },
+    });
+    if (claimed.count === 0) {
+      throw new HttpError(409, "This lead was just picked by someone else", "ALREADY_ASSIGNED");
+    }
+
+    await tx.leadAssignment.create({
+      data: {
+        leadId: id,
+        fromUserId: null,
+        toUserId: actor.id,
+        assignedBy: actor.id,
+        reason: "Picked from calling pool",
+      },
+    });
+    await tx.activity.create({
+      data: {
+        leadId: id,
+        userId: actor.id,
+        type: "assigned",
+        title: `Picked by ${actor.name}`,
+      },
+    });
+
+    return tx.lead.findFirstOrThrow({
+      where: { id },
+      include: leadListInclude,
+    });
+  });
+
+  await writeAudit({
+    userId: actor.id,
+    action: "lead.picked",
+    entityType: "lead",
+    entityId: id,
+    newValue: { assignedUserId: actor.id },
+  });
+
+  return serializeLead(lead as unknown as Record<string, unknown>);
+}
+
+export async function changeStatus(actor: AuthUser, id: string, statusId: string, reason?: string) {
+  let existing = await scopedLead(actor, id);
+  if (!existing.assignedUserId && canPickLeads(actor)) {
+    await claimLead(actor, id);
+    existing = await scopedLead(actor, id);
+  }
   const status = await prisma.leadStatus.findUnique({ where: { id: statusId } });
   if (!status?.isActive) throw new HttpError(400, "Invalid status", "INVALID_STATUS");
 

@@ -12,10 +12,14 @@ export function CallingDesk({
   queue,
   lead,
   options,
+  canPick,
+  currentUserId,
 }: {
   queue: LeadRow[];
   lead: LeadDetail | null;
   options: LeadOptions;
+  canPick: boolean;
+  currentUserId: string;
 }) {
   const router = useRouter();
   const [error, setError] = useState("");
@@ -96,6 +100,11 @@ export function CallingDesk({
                       <span className="block font-medium text-ink">{item.fullName}</span>
                       <span className="block text-xs text-ink-soft">
                         {item.status.name}
+                        {item.assignedUser
+                          ? item.assignedUser.id === currentUserId
+                            ? " · You"
+                            : ` · ${item.assignedUser.name}`
+                          : " · Pool"}
                         {item.nextFollowupAt ? ` · ${formatIst(item.nextFollowupAt)}` : ""}
                       </span>
                     </button>
@@ -120,14 +129,27 @@ export function CallingDesk({
                     <h2 className="font-display text-3xl text-ink">{lead.fullName}</h2>
                     <p className="mt-1 text-sm text-ink-soft">
                       {lead.client.name} · {lead.campaign.name}
+                      {lead.assignedUser ? ` · ${lead.assignedUser.name}` : " · Unassigned"}
                     </p>
                   </div>
-                  <a
-                    href={`tel:${lead.mobileE164}`}
-                    className="inline-flex h-11 items-center rounded-md bg-copper px-5 text-sm font-medium text-white hover:bg-copper-dark"
-                  >
-                    Call {lead.mobileE164}
-                  </a>
+                  <div className="flex flex-wrap gap-2">
+                    {canPick && !lead.assignedUser ? (
+                      <button
+                        type="button"
+                        disabled={!!busy}
+                        onClick={() => post(`/api/leads/${lead.id}/claim`, {}, "pick")}
+                        className="inline-flex h-11 items-center rounded-md border border-line bg-white px-4 text-sm font-medium text-ink hover:bg-paper-2"
+                      >
+                        Pick lead
+                      </button>
+                    ) : null}
+                    <a
+                      href={`tel:${lead.mobileE164}`}
+                      className="inline-flex h-11 items-center rounded-md bg-copper px-5 text-sm font-medium text-white hover:bg-copper-dark"
+                    >
+                      Call {lead.mobileE164}
+                    </a>
+                  </div>
                 </div>
                 <dl className="mt-5 grid gap-3 text-sm sm:grid-cols-2">
                   <Fact label="Source" value={lead.source?.name ?? lead.sourcePlatform ?? "—"} />

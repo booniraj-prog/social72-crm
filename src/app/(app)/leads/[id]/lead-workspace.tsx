@@ -23,10 +23,13 @@ export function LeadWorkspace({
   lead,
   options,
   canAssign,
+  canPick,
 }: {
   lead: LeadDetail;
   options: LeadOptions;
   canAssign: boolean;
+  canPick: boolean;
+  currentUserId: string;
 }) {
   const router = useRouter();
   const [error, setError] = useState("");
@@ -70,9 +73,20 @@ export function LeadWorkspace({
           <h1 className="mt-1 font-display text-4xl text-ink">{lead.fullName}</h1>
           <p className="mt-1 text-sm text-ink-soft">
             {lead.client.name} · {lead.campaign.name}
+            {lead.assignedUser ? ` · ${lead.assignedUser.name}` : " · Unassigned"}
           </p>
         </div>
         <div className="flex gap-2">
+          {canPick && !lead.assignedUser ? (
+            <button
+              type="button"
+              disabled={!!busy}
+              onClick={() => post(`/api/leads/${lead.id}/claim`, {}, "pick")}
+              className="inline-flex h-10 items-center rounded-md border border-line px-4 text-sm text-ink hover:bg-paper-2"
+            >
+              Pick lead
+            </button>
+          ) : null}
           <Link
             href={`/calling?leadId=${lead.id}`}
             className="inline-flex h-10 items-center rounded-md border border-line px-4 text-sm text-ink hover:bg-paper-2"

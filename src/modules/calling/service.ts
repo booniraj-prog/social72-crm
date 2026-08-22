@@ -4,7 +4,7 @@ import { prisma } from "@/lib/db";
 import type { AuthUser } from "@/lib/rbac";
 import { leadScopeWhere } from "@/lib/scope";
 import { HttpError } from "@/lib/session";
-import { requireLeadAccess, serializeLead } from "@/modules/leads/service";
+import { requireLeadAccess, serializeLead, claimLead } from "@/modules/leads/service";
 
 const CONNECTED_KEYS = new Set([
   "CONNECTED",
@@ -74,6 +74,7 @@ export async function listCallingQueue(actor: AuthUser) {
 
 export async function logCall(actor: AuthUser, leadId: string, input: z.infer<typeof logCallSchema>) {
   const data = logCallSchema.parse(input);
+  await claimLead(actor, leadId);
   const existing = await requireLeadAccess(actor, leadId);
   const disposition = await prisma.disposition.findUnique({ where: { id: data.dispositionId } });
   if (!disposition?.isActive) throw new HttpError(400, "Invalid disposition", "INVALID_DISPOSITION");

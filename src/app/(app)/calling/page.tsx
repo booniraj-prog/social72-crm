@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { hasAnyRole, hasPermission } from "@/lib/rbac";
+import { canPickLeads } from "@/lib/scope";
 import { getAuthUser } from "@/lib/session";
 import { HttpError } from "@/lib/session";
 import { listCallingQueue, listDispositions } from "@/modules/calling/service";
@@ -44,6 +45,8 @@ export default async function CallingPage({
     <CallingDesk
       queue={queue as unknown as LeadRow[]}
       lead={lead}
+      canPick={canPickLeads(actor)}
+      currentUserId={actor.id}
       options={{
         statuses,
         sources,

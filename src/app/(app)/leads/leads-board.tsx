@@ -80,7 +80,7 @@ export function LeadsBoard({
         <input
           name="q"
           defaultValue={filters.q}
-          placeholder="Name, mobile, email, ID"
+          placeholder="Name, mobile, email, ID, caller"
           className="h-9 rounded-md border border-line px-2 text-sm md:col-span-2"
         />
         <select name="clientId" defaultValue={filters.clientId ?? ""} className="h-9 rounded-md border border-line px-2 text-sm">

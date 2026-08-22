@@ -57,7 +57,7 @@ export const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
     title: "Performance",
     items: [
       { href: "/reports", label: "Reports", roles: ["crm_manager", "marketing_manager", "bpo_leader"], phase: 8 },
-      { href: "/bpo", label: "BPO Performance", roles: ["crm_manager", "bpo_leader"], phase: 7 },
+      { href: "/bpo", label: "BPO Performance", roles: ["crm_manager", "bpo_leader", "bpo_executive"], phase: 3 },
       { href: "/education", label: "Education", roles: ["crm_manager", "bpo_leader", "bpo_executive", "marketing_manager"], phase: 4 },
       { href: "/real-estate", label: "Real Estate", roles: ["crm_manager", "bpo_leader", "bpo_executive", "marketing_manager"], phase: 5 },
     ],

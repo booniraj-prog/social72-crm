@@ -1,6 +1,6 @@
 import { notFound, redirect } from "next/navigation";
 import { hasPermission } from "@/lib/rbac";
-import { canAssignLeads } from "@/lib/scope";
+import { canAssignLeads, canPickLeads } from "@/lib/scope";
 import { getAuthUser } from "@/lib/session";
 import { HttpError } from "@/lib/session";
 import { getLead, listAssignees, listLeadSources, listLeadStatuses } from "@/modules/leads/service";
@@ -24,6 +24,8 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
       <LeadWorkspace
         lead={lead as unknown as LeadDetail}
         canAssign={canAssignLeads(actor)}
+        canPick={canPickLeads(actor)}
+        currentUserId={actor.id}
         options={{
           statuses,
           sources,

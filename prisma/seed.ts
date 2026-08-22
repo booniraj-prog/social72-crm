@@ -1,5 +1,6 @@
 import { PrismaClient } from "@prisma/client";
 import { hashPassword } from "better-auth/crypto";
+import { seedBpoAndLeads } from "./sample-floor";
 
 const prisma = new PrismaClient();
 
@@ -272,7 +273,10 @@ async function main() {
   } else {
     console.log(`Super admin ${email} already exists`);
   }
+
+  await seedBpoAndLeads(prisma);
 }
+
 
 main()
   .then(async () => {

@@ -18,7 +18,10 @@ export async function leadScopeWhere(user: AuthUser): Promise<Prisma.LeadWhereIn
   }
 
   if (user.roleKey === "bpo_executive") {
-    return { ...base, assignedUserId: user.id };
+    return {
+      ...base,
+      OR: [{ assignedUserId: user.id }, { assignedUserId: null }],
+    };
   }
 
   if (user.roleKey === "bpo_leader") {
@@ -60,4 +63,13 @@ export function canCreateLeads(user: AuthUser) {
 
 export function canAssignLeads(user: AuthUser) {
   return user.roleKey === "super_admin" || user.roleKey === "crm_manager" || user.roleKey === "bpo_leader";
+}
+
+export function canPickLeads(user: AuthUser) {
+  return (
+    user.roleKey === "bpo_executive" ||
+    user.roleKey === "bpo_leader" ||
+    user.roleKey === "crm_manager" ||
+    user.roleKey === "super_admin"
+  );
 }
