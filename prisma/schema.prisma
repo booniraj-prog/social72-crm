@@ -1,0 +1,846 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum LeadTemperature {
+  HOT
+  WARM
+  COLD
+  UNQUALIFIED
+}
+
+enum ClosureType {
+  WON
+  LOST
+}
+
+model Role {
+  id          String   @id @default(uuid())
+  key         String   @unique
+  name        String
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  permissions RolePermission[]
+  users       User[]
+
+  @@map("roles")
+}
+
+model Permission {
+  id          String  @id @default(uuid())
+  key         String  @unique
+  description String?
+
+  roles RolePermission[]
+
+  @@map("permissions")
+}
+
+model RolePermission {
+  roleId       String @map("role_id")
+  permissionId String @map("permission_id")
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model User {
+  id            String    @id @default(uuid())
+  name          String
+  email         String    @unique
+  emailVerified Boolean   @default(false)
+  image         String?
+  roleId        String    @map("role_id")
+  clientId      String?   @map("client_id")
+  mobile        String?
+  isActive      Boolean   @default(true) @map("is_active")
+  lastLoginAt   DateTime? @map("last_login_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  role   Role    @relation(fields: [roleId], references: [id])
+  client Client? @relation(fields: [clientId], references: [id])
+
+  sessions Session[]
+  accounts Account[]
+
+  teamsLed          Team[]              @relation("TeamLeader")
+  teamMemberships   TeamMember[]
+  campaignsOwned    Campaign[]          @relation("CampaignOwner")
+  campaignsManaged  CampaignManager[]
+  assignedLeads     Lead[]              @relation("LeadAssignee")
+  createdLeads      Lead[]              @relation("LeadCreator")
+  assignmentsFrom   LeadAssignment[]    @relation("AssignmentFrom")
+  assignmentsTo     LeadAssignment[]    @relation("AssignmentTo")
+  assignmentsBy     LeadAssignment[]    @relation("AssignmentBy")
+  scoreEvents       LeadScoreEvent[]
+  activities        Activity[]
+  callLogs          CallLog[]
+  notes             Note[]
+  followUps         FollowUp[]          @relation("FollowUpOwner")
+  followUpsCompleted FollowUp[]         @relation("FollowUpCompletedBy")
+  tasksAssigned     Task[]              @relation("TaskAssignee")
+  tasksCreated      Task[]              @relation("TaskCreator")
+  closures          Closure[]
+  imports           Import[]
+  notifications     Notification[]
+  auditLogs         AuditLog[]
+  savedFilters      SavedFilter[]
+
+  @@index([roleId])
+  @@index([clientId])
+  @@map("user")
+}
+
+model Session {
+  id        String   @id
+  expiresAt DateTime
+  token     String   @unique
+  createdAt DateTime
+  updatedAt DateTime
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("session")
+}
+
+model Account {
+  id                    String    @id
+  accountId             String
+  providerId            String
+  issuer                String    @default("local:credential")
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime
+  updatedAt             DateTime
+
+  @@index([userId])
+  @@map("account")
+}
+
+model Verification {
+  id         String    @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime?
+  updatedAt  DateTime?
+
+  @@map("verification")
+}
+
+model Team {
+  id        String   @id @default(uuid())
+  name      String
+  leaderId  String?  @map("leader_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  leader  User?        @relation("TeamLeader", fields: [leaderId], references: [id])
+  members TeamMember[]
+  leads   Lead[]
+
+  @@map("teams")
+}
+
+model TeamMember {
+  teamId String @map("team_id")
+  userId String @map("user_id")
+
+  team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([teamId, userId])
+  @@map("team_members")
+}
+
+model Industry {
+  id   String @id @default(uuid())
+  key  String @unique
+  name String
+
+  clients    Client[]
+  campaigns  Campaign[]
+  pipelines  Pipeline[]
+  leads      Lead[]
+
+  @@map("industries")
+}
+
+model Client {
+  id           String   @id @default(uuid())
+  name         String
+  industryId   String?  @map("industry_id")
+  contactName  String?  @map("contact_name")
+  contactEmail String?  @map("contact_email")
+  contactPhone String?  @map("contact_phone")
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  industry  Industry?  @relation(fields: [industryId], references: [id])
+  users     User[]
+  campaigns Campaign[]
+  projects  Project[]
+  properties Property[]
+  leads     Lead[]
+
+  @@index([industryId])
+  @@map("clients")
+}
+
+model Campaign {
+  id           String    @id @default(uuid())
+  clientId     String    @map("client_id")
+  industryId   String    @map("industry_id")
+  pipelineId   String?   @map("pipeline_id")
+  name         String
+  campaignType String?   @map("campaign_type")
+  platform     String?
+  startDate    DateTime? @map("start_date") @db.Date
+  endDate      DateTime? @map("end_date") @db.Date
+  budget       Decimal   @default(0) @db.Decimal(14, 2)
+  actualSpend  Decimal   @default(0) @map("actual_spend") @db.Decimal(14, 2)
+  ownerUserId  String?   @map("owner_user_id")
+  isActive     Boolean   @default(true) @map("is_active")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  client    Client    @relation(fields: [clientId], references: [id])
+  industry  Industry  @relation(fields: [industryId], references: [id])
+  pipeline  Pipeline? @relation(fields: [pipelineId], references: [id])
+  owner     User?     @relation("CampaignOwner", fields: [ownerUserId], references: [id])
+  managers  CampaignManager[]
+  spend     MarketingSpend[]
+  leads     Lead[]
+  imports   Import[]
+
+  @@index([clientId])
+  @@map("campaigns")
+}
+
+model CampaignManager {
+  campaignId String @map("campaign_id")
+  userId     String @map("user_id")
+
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([campaignId, userId])
+  @@map("campaign_managers")
+}
+
+model LeadSource {
+  id       String  @id @default(uuid())
+  name     String
+  platform String?
+  isActive Boolean @default(true) @map("is_active")
+
+  leads Lead[]
+
+  @@map("lead_sources")
+}
+
+model MarketingSpend {
+  id         String   @id @default(uuid())
+  campaignId String   @map("campaign_id")
+  spendDate  DateTime @map("spend_date") @db.Date
+  platform   String?
+  amount     Decimal  @db.Decimal(14, 2)
+  notes      String?
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@map("marketing_spend")
+}
+
+model Pipeline {
+  id         String  @id @default(uuid())
+  industryId String  @map("industry_id")
+  name       String
+  isDefault  Boolean @default(false) @map("is_default")
+
+  industry Industry        @relation(fields: [industryId], references: [id])
+  stages   PipelineStage[]
+  campaigns Campaign[]
+
+  @@map("pipelines")
+}
+
+model LeadStatus {
+  id          String  @id @default(uuid())
+  key         String  @unique
+  name        String
+  description String?
+  color       String  @default("#64748b")
+  isFinal     Boolean @default(false) @map("is_final")
+  isActive    Boolean @default(true) @map("is_active")
+  sortOrder   Int     @default(0) @map("sort_order")
+
+  fromTransitions StatusTransition[] @relation("FromStatus")
+  toTransitions   StatusTransition[] @relation("ToStatus")
+  stages          PipelineStage[]
+  leads           Lead[]
+
+  @@map("lead_statuses")
+}
+
+model StatusTransition {
+  fromStatusId String @map("from_status_id")
+  toStatusId   String @map("to_status_id")
+
+  fromStatus LeadStatus @relation("FromStatus", fields: [fromStatusId], references: [id], onDelete: Cascade)
+  toStatus   LeadStatus @relation("ToStatus", fields: [toStatusId], references: [id], onDelete: Cascade)
+
+  @@id([fromStatusId, toStatusId])
+  @@map("status_transitions")
+}
+
+model PipelineStage {
+  id         String @id @default(uuid())
+  pipelineId String @map("pipeline_id")
+  statusId   String @map("status_id")
+  name       String
+  sortOrder  Int    @default(0) @map("sort_order")
+
+  pipeline Pipeline   @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
+  status   LeadStatus @relation(fields: [statusId], references: [id])
+
+  @@map("pipeline_stages")
+}
+
+model Disposition {
+  id        String  @id @default(uuid())
+  key       String  @unique
+  name      String
+  isActive  Boolean @default(true) @map("is_active")
+  sortOrder Int     @default(0) @map("sort_order")
+
+  leads    Lead[]
+  callLogs CallLog[]
+
+  @@map("dispositions")
+}
+
+model ScoringRule {
+  id          String  @id @default(uuid())
+  eventKey    String  @unique @map("event_key")
+  points      Int
+  description String?
+  isActive    Boolean @default(true) @map("is_active")
+
+  events LeadScoreEvent[]
+
+  @@map("scoring_rules")
+}
+
+model SlaRule {
+  id                String  @id @default(uuid())
+  key               String  @unique
+  name              String
+  thresholdMinutes  Int     @map("threshold_minutes")
+  escalateTo        String? @map("escalate_to")
+  isActive          Boolean @default(true) @map("is_active")
+
+  @@map("sla_rules")
+}
+
+model Setting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("settings")
+}
+
+model Lead {
+  id              String          @id @default(uuid())
+  leadNumber      String          @unique @map("lead_number")
+  clientId        String          @map("client_id")
+  campaignId      String          @map("campaign_id")
+  industryId      String          @map("industry_id")
+  sourceId        String?         @map("source_id")
+  statusId        String          @map("status_id")
+  assignedUserId  String?         @map("assigned_user_id")
+  assignedTeamId  String?         @map("assigned_team_id")
+  createdById     String?         @map("created_by_id")
+
+  firstName String? @map("first_name")
+  lastName  String? @map("last_name")
+  fullName  String  @map("full_name")
+  mobileE164 String @map("mobile_e164")
+  alternateMobile String? @map("alternate_mobile")
+  email     String?
+  city      String?
+  state     String?
+  country   String? @default("India")
+  pincode   String?
+  age       Int?
+  gender    String?
+  occupation String?
+
+  sourcePlatform String? @map("source_platform")
+  utmSource      String? @map("utm_source")
+  utmMedium      String? @map("utm_medium")
+  utmCampaign    String? @map("utm_campaign")
+  utmContent     String? @map("utm_content")
+  utmTerm        String? @map("utm_term")
+  adId           String? @map("ad_id")
+  adSet          String? @map("ad_set")
+  landingPage    String? @map("landing_page")
+  generatedAt    DateTime? @map("generated_at")
+
+  temperature       LeadTemperature @default(WARM)
+  leadScore         Int             @default(0) @map("lead_score")
+  assignedAt        DateTime?       @map("assigned_at")
+  firstContactAt    DateTime?       @map("first_contact_at")
+  lastContactAt     DateTime?       @map("last_contact_at")
+  lastActivityAt    DateTime?       @map("last_activity_at")
+  nextFollowupAt    DateTime?       @map("next_followup_at")
+  nextAction        String?         @map("next_action")
+  callAttempts      Int             @default(0) @map("call_attempts")
+  connectedCalls    Int             @default(0) @map("connected_calls")
+  followupCount     Int             @default(0) @map("followup_count")
+  lastDispositionId String?         @map("last_disposition_id")
+
+  expectedValue    Decimal  @default(0) @map("expected_value") @db.Decimal(14, 2)
+  probabilityPct   Int      @default(0) @map("probability_pct")
+  expectedRevenue  Decimal  @default(0) @map("expected_revenue") @db.Decimal(14, 2)
+  actualRevenue    Decimal  @default(0) @map("actual_revenue") @db.Decimal(14, 2)
+  closureDate      DateTime? @map("closure_date") @db.Date
+  closureType      String?  @map("closure_type")
+  wonLostReason    String?  @map("won_lost_reason")
+
+  slaAssignDueAt        DateTime? @map("sla_assign_due_at")
+  slaFirstCallDueAt     DateTime? @map("sla_first_call_due_at")
+  slaAssignBreached     Boolean   @default(false) @map("sla_assign_breached")
+  slaFirstCallBreached  Boolean   @default(false) @map("sla_first_call_breached")
+
+  converted     Boolean   @default(false)
+  duplicateOfId String?   @map("duplicate_of_id")
+  deletedAt     DateTime? @map("deleted_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  client          Client       @relation(fields: [clientId], references: [id])
+  campaign        Campaign     @relation(fields: [campaignId], references: [id])
+  industry        Industry     @relation(fields: [industryId], references: [id])
+  source          LeadSource?  @relation(fields: [sourceId], references: [id])
+  status          LeadStatus   @relation(fields: [statusId], references: [id])
+  assignedUser    User?        @relation("LeadAssignee", fields: [assignedUserId], references: [id])
+  assignedTeam    Team?        @relation(fields: [assignedTeamId], references: [id])
+  createdBy       User?        @relation("LeadCreator", fields: [createdById], references: [id])
+  lastDisposition Disposition? @relation(fields: [lastDispositionId], references: [id])
+  duplicateOf     Lead?        @relation("LeadDuplicates", fields: [duplicateOfId], references: [id])
+  duplicates      Lead[]       @relation("LeadDuplicates")
+
+  education     EducationDetails?
+  realEstate    RealEstateDetails?
+  assignments   LeadAssignment[]
+  scoreEvents   LeadScoreEvent[]
+  activities    Activity[]
+  callLogs      CallLog[]
+  notes         Note[]
+  followUps     FollowUp[]
+  tasks         Task[]
+  campusVisits  CampusVisit[]
+  siteVisits    SiteVisit[]
+  opportunities Opportunity[]
+  payments      Payment[]
+  closures      Closure[]
+  notifications Notification[]
+
+  @@index([email])
+  @@index([clientId])
+  @@index([campaignId])
+  @@index([assignedUserId])
+  @@index([statusId])
+  @@index([nextFollowupAt])
+  @@index([createdAt])
+  @@index([mobileE164])
+  @@map("leads")
+}
+
+model EducationDetails {
+  leadId             String    @id @map("lead_id")
+  studentName        String?   @map("student_name")
+  parentName         String?   @map("parent_name")
+  currentClass       String?   @map("current_class")
+  completedClass     String?   @map("completed_class")
+  targetClass        String?   @map("target_class")
+  board              String?
+  course             String?
+  stream             String?
+  preferredCourse    String?   @map("preferred_course")
+  entranceExam       String?   @map("entrance_exam")
+  academicScore      String?   @map("academic_score")
+  location           String?
+  preferredCampus    String?   @map("preferred_campus")
+  hostelRequired     Boolean?  @map("hostel_required")
+  parentOccupation   String?   @map("parent_occupation")
+  budget             Decimal?  @db.Decimal(14, 2)
+  admissionTimeline  String?   @map("admission_timeline")
+  campusVisitDate    DateTime? @map("campus_visit_date") @db.Date
+  counsellingDate    DateTime? @map("counselling_date") @db.Date
+  admissionStatus    String?   @map("admission_status")
+  fee                Decimal?  @db.Decimal(14, 2)
+  scholarship        Decimal?  @db.Decimal(14, 2)
+  paymentStatus      String?   @map("payment_status")
+
+  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@map("education_details")
+}
+
+model Project {
+  id        String  @id @default(uuid())
+  clientId  String  @map("client_id")
+  name      String
+  location  String?
+  isActive  Boolean @default(true) @map("is_active")
+
+  client     Client              @relation(fields: [clientId], references: [id])
+  properties Property[]
+  reDetails  RealEstateDetails[]
+
+  @@map("projects")
+}
+
+model Property {
+  id            String   @id @default(uuid())
+  projectId     String?  @map("project_id")
+  clientId      String   @map("client_id")
+  name          String
+  propertyType  String?  @map("property_type")
+  configuration String?
+  location      String?
+  value         Decimal? @db.Decimal(14, 2)
+
+  project    Project?            @relation(fields: [projectId], references: [id])
+  client     Client              @relation(fields: [clientId], references: [id])
+  reDetails  RealEstateDetails[]
+  siteVisits SiteVisit[]
+
+  @@map("properties")
+}
+
+model RealEstateDetails {
+  leadId                    String    @id @map("lead_id")
+  propertyId                String?   @map("property_id")
+  projectId                 String?   @map("project_id")
+  location                  String?
+  propertyType              String?   @map("property_type")
+  configuration             String?
+  budget                    Decimal?  @db.Decimal(14, 2)
+  preferredLocation         String?   @map("preferred_location")
+  purpose                   String?
+  useType                   String?   @map("use_type")
+  possessionRequirement     String?   @map("possession_requirement")
+  loanRequired              Boolean?  @map("loan_required")
+  siteVisitDate             DateTime? @map("site_visit_date") @db.Date
+  siteVisitStatus           String?   @map("site_visit_status")
+  negotiationStatus         String?   @map("negotiation_status")
+  bookingAmount             Decimal?  @map("booking_amount") @db.Decimal(14, 2)
+  expectedRegistrationDate  DateTime? @map("expected_registration_date") @db.Date
+  registrationStatus        String?   @map("registration_status")
+  propertyValue             Decimal?  @map("property_value") @db.Decimal(14, 2)
+
+  lead     Lead      @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  property Property? @relation(fields: [propertyId], references: [id])
+  project  Project?  @relation(fields: [projectId], references: [id])
+
+  @@map("real_estate_details")
+}
+
+model LeadAssignment {
+  id         String   @id @default(uuid())
+  leadId     String   @map("lead_id")
+  fromUserId String?  @map("from_user_id")
+  toUserId   String   @map("to_user_id")
+  assignedBy String?  @map("assigned_by")
+  reason     String?
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  lead   Lead  @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  from   User? @relation("AssignmentFrom", fields: [fromUserId], references: [id])
+  to     User  @relation("AssignmentTo", fields: [toUserId], references: [id])
+  by     User? @relation("AssignmentBy", fields: [assignedBy], references: [id])
+
+  @@map("lead_assignments")
+}
+
+model LeadScoreEvent {
+  id        String   @id @default(uuid())
+  leadId    String   @map("lead_id")
+  ruleId    String?  @map("rule_id")
+  points    Int
+  reason    String?
+  createdBy String?  @map("created_by")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  lead Lead          @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  rule ScoringRule?  @relation(fields: [ruleId], references: [id])
+  user User?         @relation(fields: [createdBy], references: [id])
+
+  @@map("lead_score_events")
+}
+
+model Activity {
+  id        String   @id @default(uuid())
+  leadId    String   @map("lead_id")
+  userId    String?  @map("user_id")
+  type      String
+  title     String
+  body      String?
+  refTable  String?  @map("ref_table")
+  refId     String?  @map("ref_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([leadId, createdAt])
+  @@map("activities")
+}
+
+model CallLog {
+  id             String    @id @default(uuid())
+  leadId         String    @map("lead_id")
+  userId         String    @map("user_id")
+  startedAt      DateTime  @default(now()) @map("started_at")
+  durationSec    Int?      @map("duration_sec")
+  dispositionId  String?   @map("disposition_id")
+  notes          String?
+  nextFollowupAt DateTime? @map("next_followup_at")
+  nextAction     String?   @map("next_action")
+  provider       String?
+  providerCallId String?   @map("provider_call_id")
+  recordingUrl   String?   @map("recording_url")
+
+  lead        Lead         @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  user        User         @relation(fields: [userId], references: [id])
+  disposition Disposition? @relation(fields: [dispositionId], references: [id])
+
+  @@index([leadId, startedAt])
+  @@index([userId, startedAt])
+  @@map("call_logs")
+}
+
+model Note {
+  id        String   @id @default(uuid())
+  leadId    String   @map("lead_id")
+  userId    String   @map("user_id")
+  body      String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id])
+
+  @@map("notes")
+}
+
+model FollowUp {
+  id          String    @id @default(uuid())
+  leadId      String    @map("lead_id")
+  userId      String    @map("user_id")
+  dueAt       DateTime  @map("due_at")
+  action      String?
+  completedAt DateTime? @map("completed_at")
+  completedBy String?   @map("completed_by")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  lead      Lead  @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  user      User  @relation("FollowUpOwner", fields: [userId], references: [id])
+  completer User? @relation("FollowUpCompletedBy", fields: [completedBy], references: [id])
+
+  @@index([userId, dueAt])
+  @@map("follow_ups")
+}
+
+model Task {
+  id          String    @id @default(uuid())
+  leadId      String?   @map("lead_id")
+  assignedTo  String?   @map("assigned_to")
+  title       String
+  dueAt       DateTime? @map("due_at")
+  completedAt DateTime? @map("completed_at")
+  createdBy   String?   @map("created_by")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  lead     Lead? @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  assignee User? @relation("TaskAssignee", fields: [assignedTo], references: [id])
+  creator  User? @relation("TaskCreator", fields: [createdBy], references: [id])
+
+  @@map("tasks")
+}
+
+model CampusVisit {
+  id          String    @id @default(uuid())
+  leadId      String    @map("lead_id")
+  scheduledAt DateTime? @map("scheduled_at")
+  completedAt DateTime? @map("completed_at")
+  campus      String?
+  outcome     String?
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@map("campus_visits")
+}
+
+model SiteVisit {
+  id          String    @id @default(uuid())
+  leadId      String    @map("lead_id")
+  propertyId  String?   @map("property_id")
+  scheduledAt DateTime? @map("scheduled_at")
+  completedAt DateTime? @map("completed_at")
+  outcome     String?
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  lead     Lead      @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  property Property? @relation(fields: [propertyId], references: [id])
+
+  @@map("site_visits")
+}
+
+model Opportunity {
+  id        String   @id @default(uuid())
+  leadId    String   @map("lead_id")
+  name      String?
+  value     Decimal? @db.Decimal(14, 2)
+  stage     String?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@map("opportunities")
+}
+
+model Payment {
+  id        String    @id @default(uuid())
+  leadId    String    @map("lead_id")
+  amount    Decimal   @db.Decimal(14, 2)
+  paidAt    DateTime? @map("paid_at") @db.Date
+  method    String?
+  status    String?
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@map("payments")
+}
+
+model Closure {
+  id        String      @id @default(uuid())
+  leadId    String      @map("lead_id")
+  type      ClosureType
+  amount    Decimal?    @db.Decimal(14, 2)
+  reason    String?
+  closedAt  DateTime    @map("closed_at") @db.Date
+  closedBy  String?     @map("closed_by")
+  createdAt DateTime    @default(now()) @map("created_at")
+
+  lead   Lead  @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  closer User? @relation(fields: [closedBy], references: [id])
+
+  @@map("closures")
+}
+
+model Import {
+  id             String   @id @default(uuid())
+  campaignId     String   @map("campaign_id")
+  uploadedBy     String   @map("uploaded_by")
+  filename       String
+  status         String
+  totalRows      Int      @default(0) @map("total_rows")
+  importedRows   Int      @default(0) @map("imported_rows")
+  duplicateRows  Int      @default(0) @map("duplicate_rows")
+  invalidRows    Int      @default(0) @map("invalid_rows")
+  rejectedRows   Int      @default(0) @map("rejected_rows")
+  columnMap      Json?    @map("column_map")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  campaign Campaign      @relation(fields: [campaignId], references: [id])
+  uploader User          @relation(fields: [uploadedBy], references: [id])
+  errors   ImportError[]
+
+  @@map("imports")
+}
+
+model ImportError {
+  id         String @id @default(uuid())
+  importId   String @map("import_id")
+  rowNumber  Int    @map("row_number")
+  raw        Json?
+  errors     Json
+
+  import Import @relation(fields: [importId], references: [id], onDelete: Cascade)
+
+  @@map("import_errors")
+}
+
+model Notification {
+  id        String    @id @default(uuid())
+  userId    String    @map("user_id")
+  type      String
+  title     String
+  body      String?
+  leadId    String?   @map("lead_id")
+  readAt    DateTime? @map("read_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  user User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lead Lead? @relation(fields: [leadId], references: [id])
+
+  @@index([userId, createdAt])
+  @@map("notifications")
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  userId     String?  @map("user_id")
+  action     String
+  entityType String   @map("entity_type")
+  entityId   String?  @map("entity_id")
+  oldValue   Json?    @map("old_value")
+  newValue   Json?    @map("new_value")
+  ip         String?
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([entityType, entityId, createdAt])
+  @@map("audit_logs")
+}
+
+model SavedFilter {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  name      String
+  screen    String
+  query     Json
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("saved_filters")
+}

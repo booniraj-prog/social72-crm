@@ -1,0 +1,47 @@
+@import "tailwindcss";
+
+:root {
+  --ink: #10232e;
+  --ink-soft: #3d5360;
+  --paper: #f4efe6;
+  --paper-2: #ebe4d6;
+  --line: #d7ccba;
+  --copper: #c45c26;
+  --copper-dark: #9a451b;
+  --pine: #1c4a43;
+  --sidebar: #0c1921;
+  --danger: #9f2d2d;
+}
+
+@theme inline {
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-paper: var(--paper);
+  --color-paper-2: var(--paper-2);
+  --color-line: var(--line);
+  --color-copper: var(--copper);
+  --color-copper-dark: var(--copper-dark);
+  --color-pine: var(--pine);
+  --color-sidebar: var(--sidebar);
+  --color-danger: var(--danger);
+  --font-sans: var(--font-ibm-plex-sans);
+  --font-display: var(--font-fraunces);
+}
+
+* {
+  border-color: var(--line);
+}
+
+html,
+body {
+  background: var(--paper);
+  color: var(--ink);
+}
+
+body {
+  font-family: var(--font-ibm-plex-sans), ui-sans-serif, system-ui, sans-serif;
+}
+
+::selection {
+  background: #e8c9b4;
+}
