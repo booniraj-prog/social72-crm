@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import Link from "next/link";
-import { formatIst } from "@/lib/time";
+import { defaultIstCallbackLocal, formatIst, fromIstDatetimeLocal, toIstDatetimeLocal } from "@/lib/time";
 import type { LeadDetail, LeadOptions, LeadRow } from "@/modules/leads/types";
 
 const fieldClass = "h-10 w-full rounded-md border border-line bg-white px-3 text-sm";
@@ -28,7 +28,9 @@ export function CallingDesk({
   const [callNotes, setCallNotes] = useState("");
   const [dispositionId, setDispositionId] = useState(options.dispositions?.[0]?.id ?? "");
   const [durationSec, setDurationSec] = useState("");
-  const [followAt, setFollowAt] = useState("");
+  const [followAt, setFollowAt] = useState(
+    toIstDatetimeLocal(lead?.nextFollowupAt ?? null) || defaultIstCallbackLocal(),
+  );
   const [nextAction, setNextAction] = useState(lead?.nextAction ?? "");
   const [taskTitle, setTaskTitle] = useState("");
   const [reason, setReason] = useState("");
@@ -40,19 +42,25 @@ export function CallingDesk({
   async function post(path: string, body: unknown, label: string) {
     setBusy(label);
     setError("");
-    const res = await fetch(path, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    const json = await res.json();
-    setBusy("");
-    if (!res.ok) {
-      setError(json.error?.message ?? "Action failed");
+    try {
+      const res = await fetch(path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const json = await res.json().catch(() => ({}));
+      setBusy("");
+      if (!res.ok) {
+        setError(json.error?.message ?? "Action failed");
+        return false;
+      }
+      router.refresh();
+      return true;
+    } catch {
+      setBusy("");
+      setError("Could not reach the server. If the app just restarted, try again.");
       return false;
     }
-    router.refresh();
-    return true;
   }
 
   const lastCall = lead?.callLogs?.[0];
@@ -90,10 +98,11 @@ export function CallingDesk({
                 const active = item.id === lead?.id;
                 return (
                   <li key={item.id}>
-                    <button
-                      type="button"
-                      onClick={() => router.push(`/calling?leadId=${item.id}`)}
-                      className={`w-full border-b border-line px-3 py-2.5 text-left text-sm ${
+                    <Link
+                      href={`/calling?leadId=${item.id}`}
+                      prefetch={false}
+                      scroll={false}
+                      className={`block w-full border-b border-line px-3 py-2.5 text-left text-sm ${
                         active ? "bg-paper" : "hover:bg-paper/70"
                       }`}
                     >
@@ -107,7 +116,7 @@ export function CallingDesk({
                           : " · Pool"}
                         {item.nextFollowupAt ? ` · ${formatIst(item.nextFollowupAt)}` : ""}
                       </span>
-                    </button>
+                    </Link>
                   </li>
                 );
               })}
@@ -161,6 +170,62 @@ export function CallingDesk({
                   <Fact label="Next follow-up" value={formatIst(lead.nextFollowupAt)} />
                   <Fact label="Next action" value={lead.nextAction ?? "—"} />
                 </dl>
+                {lead.industry?.key === "real_estate" ? (
+                  <div className="mt-4 rounded-md border border-line bg-paper-2 px-3 py-3 text-sm">
+                    <p className="text-[10px] uppercase tracking-[0.16em] text-ink-soft">Property</p>
+                    <dl className="mt-2 grid gap-2 sm:grid-cols-2">
+                      <Fact
+                        label="Unit"
+                        value={lead.realEstate?.property?.name ?? lead.realEstate?.project?.name ?? "—"}
+                      />
+                      <Fact label="Config" value={lead.realEstate?.configuration ?? "—"} />
+                      <Fact label="Location" value={lead.realEstate?.preferredLocation ?? lead.realEstate?.location ?? "—"} />
+                      <Fact label="Registration" value={lead.realEstate?.registrationStatus ?? "—"} />
+                      <Fact
+                        label="Visit"
+                        value={
+                          lead.siteVisits?.[0]
+                            ? `${lead.siteVisits[0].completedAt ? "Done" : "Set"} · ${formatIst(lead.siteVisits[0].scheduledAt)}`
+                            : "—"
+                        }
+                      />
+                      <Fact
+                        label="Value"
+                        value={
+                          lead.realEstate?.propertyValue != null
+                            ? `₹${Number(lead.realEstate.propertyValue).toLocaleString("en-IN")}`
+                            : "—"
+                        }
+                      />
+                    </dl>
+                    <Link href={`/leads/${lead.id}`} className="mt-2 inline-block text-xs text-copper hover:underline">
+                      Open property fields
+                    </Link>
+                  </div>
+                ) : null}
+                {lead.industry?.key === "education" ? (
+                  <div className="mt-4 rounded-md border border-line bg-paper-2 px-3 py-3 text-sm">
+                    <p className="text-[10px] uppercase tracking-[0.16em] text-ink-soft">Admissions</p>
+                    <dl className="mt-2 grid gap-2 sm:grid-cols-2">
+                      <Fact label="Student" value={lead.education?.studentName ?? lead.fullName} />
+                      <Fact label="Parent" value={lead.education?.parentName ?? "—"} />
+                      <Fact label="Target class" value={lead.education?.targetClass ?? "—"} />
+                      <Fact label="Campus" value={lead.education?.preferredCampus ?? "—"} />
+                      <Fact label="Admission" value={lead.education?.admissionStatus ?? "—"} />
+                      <Fact
+                        label="Visit"
+                        value={
+                          lead.campusVisits?.[0]
+                            ? `${lead.campusVisits[0].completedAt ? "Done" : "Set"} · ${formatIst(lead.campusVisits[0].scheduledAt)}`
+                            : "—"
+                        }
+                      />
+                    </dl>
+                    <Link href={`/leads/${lead.id}`} className="mt-2 inline-block text-xs text-copper hover:underline">
+                      Open admissions fields
+                    </Link>
+                  </div>
+                ) : null}
                 <div className="mt-4 rounded-md bg-paper-2 px-3 py-3 text-sm">
                   <p className="text-[10px] uppercase tracking-[0.16em] text-ink-soft">Last conversation</p>
                   <p className="mt-1 text-ink">
@@ -254,7 +319,9 @@ export function CallingDesk({
                 className={fieldClass}
                 value={followAt}
                 onChange={(e) => setFollowAt(e.target.value)}
+                aria-label="Next follow-up in IST"
               />
+              <p className="text-[11px] text-ink-soft">Next follow-up is stored in IST, not the browser zone.</p>
               <input
                 className={fieldClass}
                 placeholder="Next action"
@@ -264,19 +331,24 @@ export function CallingDesk({
               <button
                 type="button"
                 disabled={!!busy || !dispositionId}
-                onClick={() =>
-                  post(
+                onClick={() => {
+                  const nextFollowupAt = fromIstDatetimeLocal(followAt);
+                  if (!nextFollowupAt && !lead.nextFollowupAt) {
+                    setError("Set the next follow-up before saving this outcome");
+                    return;
+                  }
+                  void post(
                     `/api/leads/${lead.id}/calls`,
                     {
                       dispositionId,
                       notes: callNotes,
                       durationSec: durationSec ? Number(durationSec) : undefined,
-                      nextFollowupAt: followAt ? new Date(followAt).toISOString() : undefined,
+                      nextFollowupAt,
                       nextAction,
                     },
                     "call",
-                  )
-                }
+                  );
+                }}
                 className="h-10 w-full rounded-md bg-ink text-sm text-white disabled:opacity-50"
               >
                 Save call outcome

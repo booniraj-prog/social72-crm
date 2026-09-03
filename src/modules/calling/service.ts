@@ -4,7 +4,9 @@ import { prisma } from "@/lib/db";
 import type { AuthUser } from "@/lib/rbac";
 import { leadScopeWhere } from "@/lib/scope";
 import { HttpError } from "@/lib/session";
+import { replaceOpenFollowup } from "@/modules/followups/sync";
 import { requireLeadAccess, serializeLead, claimLead } from "@/modules/leads/service";
+import { applyScore } from "@/modules/ops/service";
 
 const CONNECTED_KEYS = new Set([
   "CONNECTED",
@@ -13,7 +15,13 @@ const CONNECTED_KEYS = new Set([
   "CALL_BACK",
   "FOLLOW_UP_REQUIRED",
   "SITE_VISIT_AGREED",
+  "PROPERTY_SHARED",
+  "BOOKING_TAKEN",
+  "REGISTRATION_STARTED",
   "CAMPUS_VISIT_AGREED",
+  "PARENT_CONNECTED",
+  "COUNSELLING_AGREED",
+  "APPLICATION_STARTED",
   "CLOSED_WON",
   "CLOSED_LOST",
   "BUDGET_ISSUE",
@@ -28,7 +36,13 @@ const DISPOSITION_STATUS: Record<string, string> = {
   CALL_BACK: "FOLLOW_UP",
   FOLLOW_UP_REQUIRED: "FOLLOW_UP",
   SITE_VISIT_AGREED: "SITE_VISIT",
+  PROPERTY_SHARED: "PROPERTY_SHARED",
+  BOOKING_TAKEN: "BOOKING",
+  REGISTRATION_STARTED: "REGISTRATION",
   CAMPUS_VISIT_AGREED: "CAMPUS_VISIT",
+  PARENT_CONNECTED: "PARENT_CONNECTED",
+  COUNSELLING_AGREED: "COUNSELLING",
+  APPLICATION_STARTED: "APPLICATION",
   CLOSED_WON: "CLOSED_WON",
   CLOSED_LOST: "CLOSED_LOST",
   INVALID_NUMBER: "INVALID",
@@ -66,7 +80,7 @@ export async function listCallingQueue(actor: AuthUser) {
       assignedUser: { select: { id: true, name: true } },
       source: true,
     },
-    orderBy: [{ nextFollowupAt: "asc" }, { createdAt: "desc" }],
+    orderBy: [{ nextFollowupAt: { sort: "asc", nulls: "first" } }, { createdAt: "desc" }],
     take: 80,
   });
   return leads.map((lead) => serializeLead(lead as unknown as Record<string, unknown>));
@@ -81,12 +95,19 @@ export async function logCall(actor: AuthUser, leadId: string, input: z.infer<ty
 
   const connected = CONNECTED_KEYS.has(disposition.key);
   const durationSec = typeof data.durationSec === "number" ? data.durationSec : null;
-  const nextFollowupAt = data.nextFollowupAt ? new Date(data.nextFollowupAt) : null;
+  const parsedFollowup = data.nextFollowupAt ? new Date(data.nextFollowupAt) : null;
+  const nextFollowupAt =
+    parsedFollowup && !Number.isNaN(parsedFollowup.getTime()) ? parsedFollowup : null;
   const nextAction = data.nextAction ? data.nextAction : null;
   const targetStatusKey = DISPOSITION_STATUS[disposition.key];
   const targetStatus = targetStatusKey
     ? await prisma.leadStatus.findUnique({ where: { key: targetStatusKey } })
     : null;
+  const closing = Boolean(targetStatus?.isFinal);
+  const resolvedFollowup = nextFollowupAt ?? existing.nextFollowupAt;
+  if (!closing && !resolvedFollowup) {
+    throw new HttpError(400, "Set the next follow-up before saving this outcome", "FOLLOWUP_REQUIRED");
+  }
 
   const lead = await prisma.$transaction(async (tx) => {
     const call = await tx.callLog.create({
@@ -104,13 +125,12 @@ export async function logCall(actor: AuthUser, leadId: string, input: z.infer<ty
     });
 
     if (nextFollowupAt) {
-      await tx.followUp.create({
-        data: {
-          leadId,
-          userId: existing.assignedUserId ?? actor.id,
-          dueAt: nextFollowupAt,
-          action: nextAction,
-        },
+      await replaceOpenFollowup(tx, {
+        leadId,
+        ownerUserId: existing.assignedUserId ?? actor.id,
+        actorId: actor.id,
+        dueAt: nextFollowupAt,
+        action: nextAction,
       });
     }
 
@@ -123,8 +143,8 @@ export async function logCall(actor: AuthUser, leadId: string, input: z.infer<ty
         callAttempts: { increment: 1 },
         connectedCalls: connected ? { increment: 1 } : undefined,
         lastDispositionId: disposition.id,
-        lastContactAt: connected ? new Date() : existing.lastContactAt,
-        firstContactAt: connected ? (existing.firstContactAt ?? new Date()) : existing.firstContactAt,
+        lastContactAt: new Date(),
+        firstContactAt: existing.firstContactAt ?? new Date(),
         nextFollowupAt: nextFollowupAt ?? existing.nextFollowupAt,
         nextAction: nextAction ?? existing.nextAction,
         followupCount: nextFollowupAt ? { increment: 1 } : undefined,
@@ -169,6 +189,19 @@ export async function logCall(actor: AuthUser, leadId: string, input: z.infer<ty
     entityId: leadId,
     newValue: { disposition: disposition.key, durationSec },
   });
+
+  if (connected) await applyScore(leadId, "responded", actor.id);
+  if (disposition.key === "INTERESTED") await applyScore(leadId, "interested", actor.id);
+  if (disposition.key === "NOT_INTERESTED") await applyScore(leadId, "not_interested", actor.id);
+  if (disposition.key === "SITE_VISIT_AGREED" || disposition.key === "CAMPUS_VISIT_AGREED") {
+    await applyScore(leadId, "visit_agreed", actor.id);
+  }
+  if (disposition.key === "INVALID_NUMBER" || disposition.key === "WRONG_NUMBER") {
+    await applyScore(leadId, "invalid", actor.id);
+  }
+  if (["NOT_ANSWERED", "BUSY", "SWITCHED_OFF"].includes(disposition.key) && existing.callAttempts >= 2) {
+    await applyScore(leadId, "not_reachable", actor.id);
+  }
 
   return lead.call;
 }

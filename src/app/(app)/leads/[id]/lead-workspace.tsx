@@ -4,6 +4,9 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import type { LeadDetail, LeadOptions } from "@/modules/leads/types";
+import { fromIstDatetimeLocal, toIstDatetimeLocal } from "@/lib/time";
+import { EducationPanel } from "@/components/education/education-panel";
+import { RealEstatePanel } from "@/components/real-estate/real-estate-panel";
 
 const fieldClass = "h-10 w-full rounded-md border border-line bg-white px-3 text-sm";
 
@@ -24,36 +27,52 @@ export function LeadWorkspace({
   options,
   canAssign,
   canPick,
+  inventory,
 }: {
   lead: LeadDetail;
   options: LeadOptions;
   canAssign: boolean;
   canPick: boolean;
   currentUserId: string;
+  inventory?: {
+    projects: Array<{ id: string; name: string; clientId: string; location: string | null }>;
+    properties: Array<{
+      id: string;
+      name: string;
+      projectId: string | null;
+      clientId: string;
+      configuration: string | null;
+    }>;
+  };
 }) {
   const router = useRouter();
   const [error, setError] = useState("");
   const [note, setNote] = useState("");
   const [reason, setReason] = useState("");
-  const [followAt, setFollowAt] = useState("");
+  const [followAt, setFollowAt] = useState(toIstDatetimeLocal(lead.nextFollowupAt));
   const [followAction, setFollowAction] = useState(lead.nextAction ?? "");
   const [busy, setBusy] = useState("");
 
   async function post(path: string, body: unknown, label: string) {
     setBusy(label);
     setError("");
-    const res = await fetch(path, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    const json = await res.json();
-    setBusy("");
-    if (!res.ok) {
-      setError(json.error?.message ?? "Action failed");
-      return;
+    try {
+      const res = await fetch(path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const json = await res.json().catch(() => ({}));
+      setBusy("");
+      if (!res.ok) {
+        setError(json.error?.message ?? "Action failed");
+        return;
+      }
+      router.refresh();
+    } catch {
+      setBusy("");
+      setError("Could not reach the server. If the app just restarted, try again.");
     }
-    router.refresh();
   }
 
   const won = options.statuses.find((s) => s.key === "CLOSED_WON");
@@ -129,6 +148,16 @@ export function LeadWorkspace({
         </section>
 
         <section className="space-y-4">
+          {lead.industry?.key === "education" ? (
+            <EducationPanel lead={lead} statuses={options.statuses} />
+          ) : null}
+          {lead.industry?.key === "real_estate" ? (
+            <RealEstatePanel
+              lead={lead}
+              statuses={options.statuses}
+              inventory={inventory ?? { projects: [], properties: [] }}
+            />
+          ) : null}
           <div className="rounded-lg border border-line bg-white p-5">
             <h2 className="text-xs uppercase tracking-[0.16em] text-ink-soft">Call history</h2>
             <ul className="mt-4 space-y-3">
@@ -280,7 +309,9 @@ export function LeadWorkspace({
               value={followAt}
               onChange={(e) => setFollowAt(e.target.value)}
               className={fieldClass}
+              aria-label="Next follow-up in IST"
             />
+            <p className="mt-1 text-[11px] text-ink-soft">Time is IST, not the browser timezone.</p>
             <input
               value={followAction}
               onChange={(e) => setFollowAction(e.target.value)}
@@ -290,13 +321,14 @@ export function LeadWorkspace({
             <button
               type="button"
               disabled={!!busy || !followAt}
-              onClick={() =>
-                post(
-                  `/api/leads/${lead.id}/followups`,
-                  { dueAt: new Date(followAt).toISOString(), action: followAction },
-                  "follow",
-                )
-              }
+              onClick={() => {
+                const dueAt = fromIstDatetimeLocal(followAt);
+                if (!dueAt) {
+                  setError("Enter a valid follow-up date and time (IST)");
+                  return;
+                }
+                post(`/api/leads/${lead.id}/followups`, { dueAt, action: followAction }, "follow");
+              }}
               className="mt-2 h-9 rounded-md bg-ink px-3 text-sm text-white disabled:opacity-50"
             >
               Schedule follow-up

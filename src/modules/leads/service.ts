@@ -6,6 +6,8 @@ import { normalizeMobile } from "@/lib/phone";
 import type { AuthUser } from "@/lib/rbac";
 import { canAssignLeads, canPickLeads, leadScopeWhere } from "@/lib/scope";
 import { DuplicateLeadError, HttpError } from "@/lib/session";
+import { applyScore, notify } from "@/modules/ops/service";
+import { replaceOpenFollowup } from "@/modules/followups/sync";
 
 const TEMPERATURES = ["HOT", "WARM", "COLD", "UNQUALIFIED"] as const;
 
@@ -16,6 +18,7 @@ export const leadFilterSchema = z.object({
   statusId: z.string().uuid().optional(),
   sourceId: z.string().uuid().optional(),
   assignedUserId: z.union([z.string().uuid(), z.literal("unassigned")]).optional(),
+  industryKey: z.string().trim().optional(),
   city: z.string().trim().optional(),
   state: z.string().trim().optional(),
   temperature: z.enum(TEMPERATURES).optional(),
@@ -98,6 +101,33 @@ export function serializeLead<T extends Record<string, unknown>>(lead: T) {
     if (v !== undefined && v !== null && typeof v === "object" && "toString" in v) {
       out[key] = Number(v.toString());
     }
+  }
+  const education = out.education;
+  if (education && typeof education === "object") {
+    const edu = { ...(education as Record<string, unknown>) };
+    for (const key of ["budget", "fee", "scholarship"] as const) {
+      const v = edu[key];
+      if (v !== undefined && v !== null && typeof v === "object" && "toString" in v) {
+        edu[key] = Number(v.toString());
+      }
+    }
+    out.education = edu;
+  }
+  const realEstate = out.realEstate;
+  if (realEstate && typeof realEstate === "object") {
+    const re = { ...(realEstate as Record<string, unknown>) };
+    for (const key of ["budget", "bookingAmount", "propertyValue"] as const) {
+      const v = re[key];
+      if (v !== undefined && v !== null && typeof v === "object" && "toString" in v) {
+        re[key] = Number(v.toString());
+      }
+    }
+    const property = re.property;
+    if (property && typeof property === "object") {
+      const prop = property as { id: string; name: string; configuration?: string | null };
+      re.property = { id: prop.id, name: prop.name, configuration: prop.configuration ?? null };
+    }
+    out.realEstate = re;
   }
   return out;
 }
@@ -182,6 +212,7 @@ export async function listLeads(actor: AuthUser, raw: Record<string, string | un
   if (filters.sourceId) and.push({ sourceId: filters.sourceId });
   if (filters.assignedUserId === "unassigned") and.push({ assignedUserId: null });
   else if (filters.assignedUserId) and.push({ assignedUserId: filters.assignedUserId });
+  if (filters.industryKey) and.push({ industry: { key: filters.industryKey } });
   if (filters.city) and.push({ city: { contains: filters.city, mode: "insensitive" } });
   if (filters.state) and.push({ state: { contains: filters.state, mode: "insensitive" } });
   if (filters.temperature) and.push({ temperature: filters.temperature });
@@ -244,6 +275,14 @@ async function scopedLead(actor: AuthUser, id: string) {
         orderBy: { createdAt: "desc" },
         take: 10,
         include: { assignee: { select: { name: true } } },
+      },
+      education: true,
+      campusVisits: { orderBy: { createdAt: "desc" }, take: 20 },
+      realEstate: { include: { project: true, property: true } },
+      siteVisits: {
+        orderBy: { createdAt: "desc" },
+        take: 20,
+        include: { property: { select: { id: true, name: true } } },
       },
     },
   });
@@ -555,6 +594,16 @@ export async function assignLead(actor: AuthUser, id: string, assignedUserId: st
     newValue: { assignedUserId },
   });
 
+  if (assignedUserId) {
+    await notify({
+      userId: assignedUserId,
+      type: "lead_assigned",
+      title: "New lead assigned",
+      body: existing.fullName,
+      leadId: id,
+    });
+  }
+
   return serializeLead(lead as unknown as Record<string, unknown>);
 }
 
@@ -643,6 +692,13 @@ export async function changeStatus(actor: AuthUser, id: string, statusId: string
 
   const isWon = status.key === "CLOSED_WON";
   const isLost = status.key === "CLOSED_LOST";
+  if (!status.isFinal && !existing.nextFollowupAt) {
+    throw new HttpError(
+      400,
+      "Schedule a next follow-up before leaving this lead open",
+      "FOLLOWUP_REQUIRED",
+    );
+  }
 
   const lead = await prisma.$transaction(async (tx) => {
     const updated = await tx.lead.update({
@@ -693,6 +749,27 @@ export async function changeStatus(actor: AuthUser, id: string, statusId: string
     newValue: { status: status.key, reason },
   });
 
+  if (status.key === "INTERESTED") await applyScore(id, "interested", actor.id);
+  if (status.key === "NOT_INTERESTED") await applyScore(id, "not_interested", actor.id);
+  if (status.key === "DOCUMENTATION") await applyScore(id, "documentation_started", actor.id);
+  if (status.key === "INVALID") await applyScore(id, "invalid", actor.id);
+  if (isWon) {
+    const managers = await prisma.user.findMany({
+      where: { isActive: true, role: { key: { in: ["crm_manager", "bpo_leader"] } } },
+      select: { id: true },
+      take: 8,
+    });
+    for (const user of managers) {
+      await notify({
+        userId: user.id,
+        type: "closure",
+        title: "Lead closed won",
+        body: existing.fullName,
+        leadId: id,
+      });
+    }
+  }
+
   return serializeLead(lead as unknown as Record<string, unknown>);
 }
 
@@ -720,6 +797,15 @@ export async function changeTemperature(actor: AuthUser, id: string, temperature
     oldValue: { temperature: existing.temperature },
     newValue: { temperature },
   });
+  if (temperature === "HOT" && existing.assignedUserId) {
+    await notify({
+      userId: existing.assignedUserId,
+      type: "hot_lead",
+      title: "Hot lead",
+      body: existing.fullName,
+      leadId: id,
+    });
+  }
   return serializeLead(lead as unknown as Record<string, unknown>);
 }
 
@@ -762,13 +848,12 @@ export async function scheduleFollowup(actor: AuthUser, id: string, dueAt: strin
 
   const followStatus = await prisma.leadStatus.findUnique({ where: { key: "FOLLOW_UP" } });
   const lead = await prisma.$transaction(async (tx) => {
-    await tx.followUp.create({
-      data: {
-        leadId: id,
-        userId: existing.assignedUserId ?? actor.id,
-        dueAt: due,
-        action: action || null,
-      },
+    await replaceOpenFollowup(tx, {
+      leadId: id,
+      ownerUserId: existing.assignedUserId ?? actor.id,
+      actorId: actor.id,
+      dueAt: due,
+      action: action || null,
     });
     const updated = await tx.lead.update({
       where: { id },

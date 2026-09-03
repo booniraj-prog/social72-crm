@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useState } from "react";
 import { formatIst } from "@/lib/time";
 import type { FollowupBucket } from "@/modules/followups/service";
 import type { LeadRow } from "@/modules/leads/types";
@@ -43,10 +44,31 @@ export function FollowUpsBoard({
   items: Item[];
 }) {
   const router = useRouter();
+  const [error, setError] = useState("");
+  const [busyId, setBusyId] = useState("");
 
-  async function complete(id: string) {
-    await fetch(`/api/follow-ups/${id}/complete`, { method: "POST" });
-    router.refresh();
+  async function complete(item: Item) {
+    const key = item.followUpId ?? item.lead.id;
+    setBusyId(key);
+    setError("");
+    try {
+      const res = await fetch(
+        item.followUpId
+          ? `/api/follow-ups/${item.followUpId}/complete`
+          : `/api/leads/${item.lead.id}/followups/complete`,
+        { method: "POST" },
+      );
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(json.error?.message ?? "Could not complete follow-up");
+        return;
+      }
+      router.refresh();
+    } catch {
+      setError("Could not reach the server. If the app just restarted, try again.");
+    } finally {
+      setBusyId("");
+    }
   }
 
   return (
@@ -62,6 +84,7 @@ export function FollowUpsBoard({
           <Link
             key={item.key}
             href={`/follow-ups?bucket=${item.key}`}
+            prefetch={false}
             className={`rounded-md px-3 py-1.5 text-sm ${
               bucket === item.key ? "bg-ink text-white" : "border border-line bg-white text-ink"
             }`}
@@ -70,6 +93,8 @@ export function FollowUpsBoard({
           </Link>
         ))}
       </div>
+
+      {error ? <p className="mt-4 text-sm text-danger">{error}</p> : null}
 
       {bucket === "overdue" && counts.overdue > 0 ? (
         <p className="mt-4 text-sm text-danger">Overdue follow-ups need action before new work.</p>
@@ -97,7 +122,11 @@ export function FollowUpsBoard({
               items.map((item) => (
                 <tr key={`${item.lead.id}-${item.followUpId ?? "lead"}`} className="border-t border-line">
                   <td className="px-4 py-3">
-                    <Link href={`/calling?leadId=${item.lead.id}`} className="font-medium hover:underline">
+                    <Link
+                      href={`/calling?leadId=${item.lead.id}`}
+                      prefetch={false}
+                      className="font-medium hover:underline"
+                    >
                       {item.lead.fullName}
                     </Link>
                     <p className="text-xs text-ink-soft">{item.lead.client.name}</p>
@@ -108,18 +137,23 @@ export function FollowUpsBoard({
                   <td className="px-4 py-3 text-ink-soft">{item.action ?? "—"}</td>
                   <td className="px-4 py-3 text-ink-soft">{item.lead.assignedUser?.name ?? "Unassigned"}</td>
                   <td className="px-4 py-3 text-right">
-                    {item.followUpId ? (
+                    {bucket === "none" ? (
+                      <Link
+                        href={`/calling?leadId=${item.lead.id}`}
+                        prefetch={false}
+                        className="text-sm text-copper hover:underline"
+                      >
+                        Call
+                      </Link>
+                    ) : (
                       <button
                         type="button"
-                        className="text-sm text-copper hover:underline"
-                        onClick={() => complete(item.followUpId!)}
+                        disabled={!!busyId}
+                        className="text-sm text-copper hover:underline disabled:opacity-50"
+                        onClick={() => complete(item)}
                       >
                         Complete
                       </button>
-                    ) : (
-                      <Link href={`/calling?leadId=${item.lead.id}`} className="text-sm text-copper hover:underline">
-                        Call
-                      </Link>
                     )}
                   </td>
                 </tr>

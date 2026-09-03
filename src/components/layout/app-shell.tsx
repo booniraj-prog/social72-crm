@@ -5,8 +5,27 @@ import { usePathname, useRouter } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
 import { canSeeNav, NAV_GROUPS, type AuthUser } from "@/lib/rbac";
 import { cn } from "@/lib/cn";
+import { NotificationBell } from "@/components/layout/notification-bell";
 
-export function AppShell({ user, children }: { user: AuthUser; children: React.ReactNode }) {
+export function AppShell({
+  user,
+  unreadCount,
+  notifications,
+  children,
+}: {
+  user: AuthUser;
+  unreadCount: number;
+  notifications: Array<{
+    id: string;
+    title: string;
+    body: string | null;
+    leadId: string | null;
+    leadName: string | null;
+    readAt: string | null;
+    createdAt: string;
+  }>;
+  children: React.ReactNode;
+}) {
   const pathname = usePathname();
   const router = useRouter();
 
@@ -41,6 +60,7 @@ export function AppShell({ user, children }: { user: AuthUser; children: React.R
                       <li key={item.href}>
                         <Link
                           href={item.href}
+                          prefetch={false}
                           className={cn(
                             "flex items-center justify-between rounded-md px-2 py-1.5 text-[13px]",
                             active
@@ -49,7 +69,7 @@ export function AppShell({ user, children }: { user: AuthUser; children: React.R
                           )}
                         >
                           {item.label}
-                          {item.phase > 3 ? (
+                          {item.phase > 10 ? (
                             <span className="text-[10px] text-[#8d8072]">P{item.phase}</span>
                           ) : null}
                         </Link>
@@ -72,7 +92,8 @@ export function AppShell({ user, children }: { user: AuthUser; children: React.R
           />
         </form>
         <div className="border-t border-white/10 px-4 py-4">
-          <p className="truncate text-sm text-[#f4efe6]">{user.name}</p>
+          <NotificationBell initialUnread={unreadCount} initialItems={notifications} />
+          <p className="mt-3 truncate text-sm text-[#f4efe6]">{user.name}</p>
           <p className="truncate text-xs text-[#8d8072]">{user.roleName}</p>
           <button
             type="button"

@@ -73,6 +73,10 @@ export type LeadDetail = LeadRow & {
     createdAt: string;
     user: { name: string } | null;
   }>;
+  education?: import("@/modules/education/types").EducationDetailsView | null;
+  campusVisits?: import("@/modules/education/types").CampusVisitView[];
+  realEstate?: import("@/modules/real-estate/types").RealEstateDetailsView | null;
+  siteVisits?: import("@/modules/real-estate/types").SiteVisitView[];
 };
 
 export type LeadOptions = {

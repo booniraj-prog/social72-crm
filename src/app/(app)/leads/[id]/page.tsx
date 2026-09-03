@@ -4,6 +4,7 @@ import { canAssignLeads, canPickLeads } from "@/lib/scope";
 import { getAuthUser } from "@/lib/session";
 import { HttpError } from "@/lib/session";
 import { getLead, listAssignees, listLeadSources, listLeadStatuses } from "@/modules/leads/service";
+import { listRealEstateInventory } from "@/modules/real-estate/service";
 import { LeadWorkspace } from "./lead-workspace";
 import type { LeadDetail } from "@/modules/leads/types";
 
@@ -19,13 +20,19 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
       listLeadSources(),
       listAssignees(),
     ]);
+    const typed = lead as unknown as LeadDetail;
+    const inventory =
+      typed.industry?.key === "real_estate"
+        ? await listRealEstateInventory(typed.client.id)
+        : { projects: [], properties: [] };
 
     return (
       <LeadWorkspace
-        lead={lead as unknown as LeadDetail}
+        lead={typed}
         canAssign={canAssignLeads(actor)}
         canPick={canPickLeads(actor)}
         currentUserId={actor.id}
+        inventory={inventory}
         options={{
           statuses,
           sources,

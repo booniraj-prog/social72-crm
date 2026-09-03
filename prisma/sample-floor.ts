@@ -201,6 +201,26 @@ export async function seedBpoAndLeads(prisma: PrismaClient) {
       ownerUserId: admin.id,
     },
   });
+  const spendLines = [
+    { id: "seed-spend-class11-1", spendDate: new Date("2026-07-01"), amount: 42000, platform: "meta_ads" },
+    { id: "seed-spend-class11-2", spendDate: new Date("2026-08-01"), amount: 39000, platform: "meta_ads" },
+    { id: "seed-spend-class11-3", spendDate: new Date("2026-08-20"), amount: 37000, platform: "meta_ads" },
+  ];
+  for (const line of spendLines) {
+    await prisma.marketingSpend.upsert({
+      where: { id: line.id },
+      update: { amount: line.amount, spendDate: line.spendDate, platform: line.platform },
+      create: { ...line, campaignId: campaign.id, notes: "Seeded media spend" },
+    });
+  }
+  const spendSum = await prisma.marketingSpend.aggregate({
+    where: { campaignId: campaign.id },
+    _sum: { amount: true },
+  });
+  await prisma.campaign.update({
+    where: { id: campaign.id },
+    data: { actualSpend: Number(spendSum._sum.amount ?? 0) },
+  });
   const meta = await prisma.leadSource.upsert({
     where: { id: "seed-source-meta" },
     update: { name: "Meta Ads", isActive: true },
@@ -333,6 +353,66 @@ export async function seedBpoAndLeads(prisma: PrismaClient) {
           },
         });
       }
+    }
+
+    const boards = ["CBSE", "ICSE", "State board", "IB"];
+    const streams = ["Science", "Commerce", "Arts", "Undecided"];
+    const campuses = ["Main campus", "Annex", "Residential campus"];
+    const timelines = ["This academic year", "Next year", "Immediate", "Exploring"];
+    const admissionStatuses = ["Enquiry", "Counselling", "Application", "Offered", "Admitted", "Waitlisted"];
+    const paymentStatuses = ["Unpaid", "Partial", "Paid"];
+    const targetClass = i % 2 === 0 ? "Class 11" : "Class 12";
+    const campus = campuses[i % campuses.length];
+    const counselling = ["COUNSELLING", "CAMPUS_VISIT", "APPLICATION", "DOCUMENTATION", "FEE_DISCUSSION", "PAYMENT_PENDING", "ADMISSION_CONFIRMED", "CLOSED_WON"].includes(statusKey)
+      ? new Date(now.getTime() - 3 * 86400_000)
+      : null;
+    const visitDate = ["CAMPUS_VISIT", "APPLICATION", "DOCUMENTATION", "FEE_DISCUSSION", "PAYMENT_PENDING", "ADMISSION_CONFIRMED", "CLOSED_WON"].includes(statusKey)
+      ? new Date(now.getTime() + (statusKey === "CAMPUS_VISIT" ? 2 : -2) * 86400_000)
+      : null;
+
+    const edu = {
+      studentName: `${firstName} ${lastName}`,
+      parentName: i % 2 === 0 ? `${lastName} parent` : `Mrs ${lastName}`,
+      currentClass: i % 2 === 0 ? "Class 10" : "Class 11",
+      completedClass: i % 2 === 0 ? "Class 10" : "Class 11",
+      targetClass,
+      board: boards[i % boards.length],
+      course: targetClass,
+      stream: streams[i % streams.length],
+      preferredCourse: streams[i % streams.length],
+      entranceExam: i % 3 === 0 ? "School entrance" : null,
+      academicScore: `${70 + (i % 25)}%`,
+      location: city,
+      preferredCampus: campus,
+      hostelRequired: i % 4 === 0,
+      parentOccupation: i % 2 === 0 ? "Business" : "Salaried",
+      budget: 120000 + (i % 8) * 25000,
+      admissionTimeline: timelines[i % timelines.length],
+      campusVisitDate: visitDate,
+      counsellingDate: counselling,
+      admissionStatus: admissionStatuses[Math.min(i % admissionStatuses.length, admissionStatuses.length - 1)],
+      fee: 180000,
+      scholarship: i % 5 === 0 ? 20000 : 0,
+      paymentStatus: statusKey === "CLOSED_WON" ? "Paid" : paymentStatuses[i % 3],
+    };
+
+    await prisma.educationDetails.upsert({
+      where: { leadId },
+      update: edu,
+      create: { leadId, ...edu },
+    });
+
+    await prisma.campusVisit.deleteMany({ where: { leadId } });
+    if (visitDate) {
+      await prisma.campusVisit.create({
+        data: {
+          leadId,
+          scheduledAt: visitDate,
+          completedAt: statusKey === "CAMPUS_VISIT" ? null : visitDate,
+          campus,
+          outcome: statusKey === "CAMPUS_VISIT" ? null : "Visited campus — sample",
+        },
+      });
     }
   }
 

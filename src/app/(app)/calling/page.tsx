@@ -43,6 +43,7 @@ export default async function CallingPage({
 
   return (
     <CallingDesk
+      key={lead?.id ?? "empty"}
       queue={queue as unknown as LeadRow[]}
       lead={lead}
       canPick={canPickLeads(actor)}

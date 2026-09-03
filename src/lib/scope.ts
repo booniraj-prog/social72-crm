@@ -37,7 +37,10 @@ export async function leadScopeWhere(user: AuthUser): Promise<Prisma.LeadWhereIn
       if (team.leaderId) memberIds.add(team.leaderId);
     }
     if (teams.length === 0) {
-      return base;
+      return {
+        ...base,
+        OR: [{ assignedUserId: user.id }, { assignedUserId: null }],
+      };
     }
     return {
       ...base,

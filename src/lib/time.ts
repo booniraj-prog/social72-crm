@@ -1,6 +1,6 @@
 const IST = "Asia/Kolkata";
 
-function ymdInIst(date: Date) {
+export function ymdInIst(date: Date) {
   const parts = new Intl.DateTimeFormat("en-GB", {
     timeZone: IST,
     year: "numeric",
@@ -39,4 +39,55 @@ export function formatIst(iso: string | Date | null) {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+function istPart(date: Date, type: Intl.DateTimeFormatPartTypes) {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: IST,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date);
+  return parts.find((p) => p.type === type)?.value ?? "";
+}
+
+/** Value for `<input type="datetime-local">` in IST, independent of the browser zone. */
+export function toIstDatetimeLocal(iso: string | Date | null) {
+  if (!iso) return "";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  return `${istPart(date, "year")}-${istPart(date, "month")}-${istPart(date, "day")}T${istPart(date, "hour")}:${istPart(date, "minute")}`;
+}
+
+/** Parse a datetime-local string as IST (not the browser timezone). */
+export function fromIstDatetimeLocal(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  const stamp = trimmed.length === 16 ? `${trimmed}:00` : trimmed;
+  const date = new Date(`${stamp}+05:30`);
+  if (Number.isNaN(date.getTime())) return undefined;
+  return date.toISOString();
+}
+
+export function defaultIstCallbackLocal() {
+  const tomorrow = addIstDays(new Date(), 1);
+  return toIstDatetimeLocal(new Date(`${ymdInIst(tomorrow)}T10:00:00+05:30`));
+}
+
+export function toIstDateInput(iso: string | Date | null) {
+  if (!iso) return "";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  return `${istPart(date, "year")}-${istPart(date, "month")}-${istPart(date, "day")}`;
+}
+
+export function fromIstDateInput(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  const date = new Date(`${trimmed}T00:00:00+05:30`);
+  if (Number.isNaN(date.getTime())) return undefined;
+  return date;
 }

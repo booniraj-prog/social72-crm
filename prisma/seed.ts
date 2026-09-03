@@ -1,6 +1,7 @@
 import { PrismaClient } from "@prisma/client";
 import { hashPassword } from "better-auth/crypto";
 import { seedBpoAndLeads } from "./sample-floor";
+import { seedRealEstate } from "./sample-real-estate";
 
 const prisma = new PrismaClient();
 
@@ -63,16 +64,25 @@ const STATUSES: Array<{
   { key: "CALL_NOT_ATTEMPTED", name: "Call not attempted", color: "#7c3aed", isFinal: false, sortOrder: 30, description: "Assigned but not dialled" },
   { key: "CALL_ATTEMPTED", name: "Call attempted", color: "#0891b2", isFinal: false, sortOrder: 40, description: "Dialled, not yet connected" },
   { key: "CONNECTED", name: "Connected", color: "#0f766e", isFinal: false, sortOrder: 50, description: "Spoke with the lead" },
+  { key: "PARENT_CONNECTED", name: "Parent connected", color: "#0f766e", isFinal: false, sortOrder: 55, description: "Spoke with a parent or guardian" },
   { key: "NOT_INTERESTED", name: "Not interested", color: "#b45309", isFinal: false, sortOrder: 60, description: "Declined the offer" },
   { key: "INTERESTED", name: "Interested", color: "#15803d", isFinal: false, sortOrder: 70, description: "Expressed interest" },
   { key: "QUALIFIED", name: "Qualified", color: "#166534", isFinal: false, sortOrder: 80, description: "Meets qualification criteria" },
+  { key: "PROPERTY_SHARED", name: "Property shared", color: "#1d4ed8", isFinal: false, sortOrder: 85, description: "Inventory sent to the lead" },
   { key: "FOLLOW_UP", name: "Follow-up", color: "#c2410c", isFinal: false, sortOrder: 90, description: "Callback scheduled" },
-  { key: "SITE_VISIT", name: "Site visit", color: "#1d4ed8", isFinal: false, sortOrder: 100, description: "Property site visit" },
+  { key: "SITE_VISIT", name: "Site visit planned", color: "#1d4ed8", isFinal: false, sortOrder: 100, description: "Property site visit scheduled" },
+  { key: "SITE_VISIT_COMPLETED", name: "Site visit completed", color: "#0f766e", isFinal: false, sortOrder: 102, description: "Buyer visited the site" },
+  { key: "COUNSELLING", name: "Counselling", color: "#4338ca", isFinal: false, sortOrder: 105, description: "Admission counselling" },
   { key: "CAMPUS_VISIT", name: "Campus visit", color: "#1d4ed8", isFinal: false, sortOrder: 110, description: "Campus visit" },
+  { key: "APPLICATION", name: "Application", color: "#0f766e", isFinal: false, sortOrder: 115, description: "Application in progress" },
   { key: "MEETING", name: "Meeting", color: "#4338ca", isFinal: false, sortOrder: 120, description: "In-person or virtual meeting" },
   { key: "NEGOTIATION", name: "Negotiation", color: "#a16207", isFinal: false, sortOrder: 130, description: "Commercial discussion" },
+  { key: "BOOKING", name: "Booking", color: "#15803d", isFinal: false, sortOrder: 132, description: "Token / booking taken" },
   { key: "DOCUMENTATION", name: "Documentation", color: "#0f766e", isFinal: false, sortOrder: 140, description: "Paperwork in progress" },
+  { key: "REGISTRATION", name: "Registration", color: "#0f766e", isFinal: false, sortOrder: 142, description: "Registration in progress" },
+  { key: "FEE_DISCUSSION", name: "Fee discussion", color: "#a16207", isFinal: false, sortOrder: 145, description: "Fee / scholarship discussion" },
   { key: "PAYMENT_PENDING", name: "Payment pending", color: "#b45309", isFinal: false, sortOrder: 150, description: "Awaiting payment" },
+  { key: "ADMISSION_CONFIRMED", name: "Admission confirmed", color: "#15803d", isFinal: false, sortOrder: 155, description: "Seat confirmed, pending closure" },
   { key: "CLOSED_WON", name: "Closed won", color: "#15803d", isFinal: true, sortOrder: 160, description: "Converted" },
   { key: "CLOSED_LOST", name: "Closed lost", color: "#b91c1c", isFinal: true, sortOrder: 170, description: "Lost" },
   { key: "DUPLICATE", name: "Duplicate", color: "#57534d", isFinal: true, sortOrder: 180, description: "Merged or duplicate" },
@@ -162,6 +172,64 @@ async function main() {
     });
   }
 
+  const educationStages = [
+    { name: "Lead", key: "NEW", sortOrder: 10 },
+    { name: "Contacted", key: "CONNECTED", sortOrder: 20 },
+    { name: "Parent connected", key: "PARENT_CONNECTED", sortOrder: 30 },
+    { name: "Qualified", key: "QUALIFIED", sortOrder: 40 },
+    { name: "Interested", key: "INTERESTED", sortOrder: 50 },
+    { name: "Counselling", key: "COUNSELLING", sortOrder: 60 },
+    { name: "Campus visit", key: "CAMPUS_VISIT", sortOrder: 70 },
+    { name: "Application", key: "APPLICATION", sortOrder: 80 },
+    { name: "Documentation", key: "DOCUMENTATION", sortOrder: 90 },
+    { name: "Fee discussion", key: "FEE_DISCUSSION", sortOrder: 100 },
+    { name: "Payment", key: "PAYMENT_PENDING", sortOrder: 110 },
+    { name: "Admission confirmed", key: "ADMISSION_CONFIRMED", sortOrder: 120 },
+    { name: "Closed won", key: "CLOSED_WON", sortOrder: 130 },
+  ];
+  await prisma.pipelineStage.deleteMany({ where: { pipelineId: "seed-pipeline-education" } });
+  for (const stage of educationStages) {
+    const status = await prisma.leadStatus.findUnique({ where: { key: stage.key } });
+    if (!status) continue;
+    await prisma.pipelineStage.create({
+      data: {
+        pipelineId: "seed-pipeline-education",
+        statusId: status.id,
+        name: stage.name,
+        sortOrder: stage.sortOrder,
+      },
+    });
+  }
+
+  const realEstateStages = [
+    { name: "Lead", key: "NEW", sortOrder: 10 },
+    { name: "Contacted", key: "CONNECTED", sortOrder: 20 },
+    { name: "Qualified", key: "QUALIFIED", sortOrder: 30 },
+    { name: "Interested", key: "INTERESTED", sortOrder: 40 },
+    { name: "Property shared", key: "PROPERTY_SHARED", sortOrder: 50 },
+    { name: "Site visit planned", key: "SITE_VISIT", sortOrder: 60 },
+    { name: "Site visit completed", key: "SITE_VISIT_COMPLETED", sortOrder: 70 },
+    { name: "Negotiation", key: "NEGOTIATION", sortOrder: 80 },
+    { name: "Booking", key: "BOOKING", sortOrder: 90 },
+    { name: "Documentation", key: "DOCUMENTATION", sortOrder: 100 },
+    { name: "Registration", key: "REGISTRATION", sortOrder: 110 },
+    { name: "Closed won", key: "CLOSED_WON", sortOrder: 120 },
+    { name: "Closed lost", key: "CLOSED_LOST", sortOrder: 130 },
+  ];
+  await prisma.pipelineStage.deleteMany({ where: { pipelineId: "seed-pipeline-real-estate" } });
+  for (const stage of realEstateStages) {
+    const status = await prisma.leadStatus.findUnique({ where: { key: stage.key } });
+    if (!status) continue;
+    await prisma.pipelineStage.create({
+      data: {
+        pipelineId: "seed-pipeline-real-estate",
+        statusId: status.id,
+        name: stage.name,
+        sortOrder: stage.sortOrder,
+      },
+    });
+  }
+
   const dispositions = [
     "CONNECTED",
     "NOT_ANSWERED",
@@ -177,7 +245,13 @@ async function main() {
     "COMPETITOR",
     "FOLLOW_UP_REQUIRED",
     "SITE_VISIT_AGREED",
+    "PROPERTY_SHARED",
+    "BOOKING_TAKEN",
+    "REGISTRATION_STARTED",
     "CAMPUS_VISIT_AGREED",
+    "PARENT_CONNECTED",
+    "COUNSELLING_AGREED",
+    "APPLICATION_STARTED",
     "CLOSED_WON",
     "CLOSED_LOST",
   ];
@@ -275,6 +349,7 @@ async function main() {
   }
 
   await seedBpoAndLeads(prisma);
+  await seedRealEstate(prisma);
 }
 
 

@@ -4,6 +4,7 @@ import type { AuthUser } from "@/lib/rbac";
 import { leadScopeWhere } from "@/lib/scope";
 import { HttpError } from "@/lib/session";
 import { istRange, startOfIstDay } from "@/lib/time";
+import { earliestOpenFollowup } from "@/modules/followups/sync";
 import { requireLeadAccess, serializeLead } from "@/modules/leads/service";
 
 export const FOLLOWUP_BUCKETS = [
@@ -135,12 +136,32 @@ export async function listFollowupBucket(actor: AuthUser, bucket: FollowupBucket
     take: 100,
   });
 
-  return leads.map((lead) => ({
-    followUpId: null as string | null,
-    dueAt: lead.nextFollowupAt,
-    action: lead.nextAction,
-    lead: serializeLead(lead as unknown as Record<string, unknown>),
-  }));
+  const opens = await prisma.followUp.findMany({
+    where: {
+      completedAt: null,
+      leadId: { in: leads.map((lead) => lead.id) },
+    },
+    orderBy: { dueAt: "asc" },
+  });
+  const opensByLead = new Map<string, typeof opens>();
+  for (const row of opens) {
+    const list = opensByLead.get(row.leadId) ?? [];
+    list.push(row);
+    opensByLead.set(row.leadId, list);
+  }
+
+  return leads.map((lead) => {
+    const rows = opensByLead.get(lead.id) ?? [];
+    const due = lead.nextFollowupAt?.getTime();
+    const match =
+      (due != null ? rows.find((row) => row.dueAt.getTime() === due) : undefined) ?? rows[0];
+    return {
+      followUpId: match?.id ?? null,
+      dueAt: lead.nextFollowupAt,
+      action: lead.nextAction,
+      lead: serializeLead(lead as unknown as Record<string, unknown>),
+    };
+  });
 }
 
 export async function completeFollowup(actor: AuthUser, followUpId: string) {
@@ -157,15 +178,20 @@ export async function completeFollowup(actor: AuthUser, followUpId: string) {
       where: { id: followUpId },
       data: { completedAt: new Date(), completedBy: actor.id },
     });
-    const nextOpen = await tx.followUp.findFirst({
-      where: { leadId: followUp.leadId, completedAt: null },
-      orderBy: { dueAt: "asc" },
+    const nextOpen = await earliestOpenFollowup(tx, followUp.leadId);
+    const leadRow = await tx.lead.findUnique({
+      where: { id: followUp.leadId },
+      select: { nextFollowupAt: true, nextAction: true },
     });
+    const completedDue = followUp.dueAt.getTime();
+    const leadDue = leadRow?.nextFollowupAt?.getTime();
+    const keepLeadDate = !nextOpen && leadDue != null && leadDue !== completedDue;
+
     await tx.lead.update({
       where: { id: followUp.leadId },
       data: {
-        nextFollowupAt: nextOpen?.dueAt ?? null,
-        nextAction: nextOpen?.action ?? null,
+        nextFollowupAt: nextOpen?.dueAt ?? (keepLeadDate ? leadRow!.nextFollowupAt : null),
+        nextAction: nextOpen?.action ?? (keepLeadDate ? leadRow!.nextAction : null),
         lastActivityAt: new Date(),
       },
     });
@@ -190,5 +216,30 @@ export async function completeFollowup(actor: AuthUser, followUpId: string) {
     newValue: { followUpId },
   });
   return updated;
+}
+
+export async function completeCurrentFollowup(actor: AuthUser, leadId: string) {
+  await requireLeadAccess(actor, leadId);
+  const open = await prisma.followUp.findFirst({
+    where: { leadId, completedAt: null },
+    orderBy: { dueAt: "asc" },
+  });
+  if (open) return completeFollowup(actor, open.id);
+
+  const lead = await prisma.lead.findUnique({
+    where: { id: leadId },
+    select: { nextFollowupAt: true, nextAction: true, assignedUserId: true },
+  });
+  if (!lead?.nextFollowupAt) throw new HttpError(400, "No open follow-up to complete", "NO_FOLLOWUP");
+
+  const created = await prisma.followUp.create({
+    data: {
+      leadId,
+      userId: lead.assignedUserId ?? actor.id,
+      dueAt: lead.nextFollowupAt,
+      action: lead.nextAction,
+    },
+  });
+  return completeFollowup(actor, created.id);
 }
 
