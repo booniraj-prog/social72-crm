@@ -8,6 +8,7 @@ import { normalizeMobile } from "@/lib/phone";
 import { createLeadWithDuplicateInfo } from "@/modules/leads/service";
 import { computeLeadMetrics, metricsFromCounts } from "@/modules/insights/service";
 import { CAMPAIGN_TYPES, PLATFORMS } from "@/modules/insights/constants";
+import { requiredId } from "@/lib/ids";
 
 function campaignScope(actor: AuthUser) {
   if (actor.roleKey === "marketing_manager") {
@@ -20,7 +21,7 @@ function campaignScope(actor: AuthUser) {
 
 export const createCampaignSchema = z.object({
   name: z.string().trim().min(2).max(160),
-  clientId: z.string().uuid(),
+  clientId: requiredId("a client"),
   platform: z.string().trim().max(40).optional().or(z.literal("")),
   campaignType: z.string().trim().max(40).optional().or(z.literal("")),
   startDate: z.string().optional().or(z.literal("")),
@@ -314,6 +315,7 @@ export async function importCampaignLeads(
   actor: AuthUser,
   campaignId: string,
   rows: Array<{ fullName?: string; firstName?: string; lastName?: string; mobile?: string; email?: string; city?: string }>,
+  extras?: { assignedUserId?: string; nextFollowupAt?: string; nextAction?: string },
 ) {
   const campaign = await prisma.campaign.findFirst({
     where: { id: campaignId, ...campaignScope(actor) },
@@ -325,14 +327,28 @@ export async function importCampaignLeads(
   let invalid = 0;
   const errors: Array<{ row: number; message: string }> = [];
 
+  const seen = new Set<string>();
   for (const [i, row] of rows.entries()) {
-    const mobile = row.mobile ? normalizeMobile(row.mobile) : "";
+    let mobile = "";
+    try {
+      if (row.mobile) mobile = normalizeMobile(row.mobile);
+    } catch {
+      invalid += 1;
+      errors.push({ row: i + 1, message: "Enter a valid mobile number" });
+      continue;
+    }
     const name = (row.fullName || [row.firstName, row.lastName].filter(Boolean).join(" ")).trim();
     if (!mobile || mobile.length < 10 || !name) {
       invalid += 1;
       errors.push({ row: i + 1, message: "Name and mobile are required" });
       continue;
     }
+    if (seen.has(mobile)) {
+      duplicates += 1;
+      errors.push({ row: i + 1, message: "Duplicate mobile in this file" });
+      continue;
+    }
+    seen.add(mobile);
     try {
       await createLeadWithDuplicateInfo(actor, {
         fullName: name,
@@ -341,6 +357,9 @@ export async function importCampaignLeads(
         city: row.city ?? "",
         clientId: campaign.clientId,
         campaignId: campaign.id,
+        assignedUserId: extras?.assignedUserId || actor.id,
+        nextFollowupAt: extras?.nextFollowupAt,
+        nextAction: extras?.nextAction,
       });
       success += 1;
     } catch (error) {
@@ -358,4 +377,43 @@ export async function importCampaignLeads(
   }
 
   return { total: rows.length, success, duplicates, invalid, rejected: invalid + duplicates, errors: errors.slice(0, 50) };
+}
+
+export async function importClientLeads(
+  actor: AuthUser,
+  clientId: string,
+  input: {
+    campaignId?: string;
+    assignedUserId: string;
+    rows: Array<{ fullName?: string; firstName?: string; lastName?: string; mobile?: string; email?: string; city?: string }>;
+  },
+) {
+  const client = await prisma.client.findUnique({ where: { id: clientId } });
+  if (!client) throw new HttpError(404, "Client not found", "NOT_FOUND");
+  let campaignId = input.campaignId?.trim() || "";
+  if (campaignId) {
+    const campaign = await prisma.campaign.findFirst({ where: { id: campaignId, clientId } });
+    if (!campaign) throw new HttpError(400, "Campaign does not belong to this client", "INVALID_CAMPAIGN");
+  } else {
+    const existing = await prisma.campaign.findFirst({
+      where: { clientId, isActive: true },
+      orderBy: { createdAt: "desc" },
+    });
+    if (existing) campaignId = existing.id;
+    else {
+      const created = await createCampaign(actor, {
+        name: `CSV import · ${new Date().toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata" })}`,
+        clientId,
+      });
+      campaignId = created.id;
+    }
+  }
+  const followAt = new Date().toISOString();
+  const summary = await importCampaignLeads(
+    actor,
+    campaignId,
+    input.rows,
+    { assignedUserId: input.assignedUserId, nextFollowupAt: followAt, nextAction: "First outbound call" },
+  );
+  return { ...summary, campaignId };
 }

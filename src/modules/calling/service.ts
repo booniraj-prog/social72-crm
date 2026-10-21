@@ -4,9 +4,12 @@ import { prisma } from "@/lib/db";
 import type { AuthUser } from "@/lib/rbac";
 import { leadScopeWhere } from "@/lib/scope";
 import { HttpError } from "@/lib/session";
+import { startOfIstDay, addIstDays } from "@/lib/time";
 import { replaceOpenFollowup } from "@/modules/followups/sync";
 import { requireLeadAccess, serializeLead, claimLead } from "@/modules/leads/service";
+import { excludePausedLeads, pausedLeadIds } from "@/lib/lead-active";
 import { applyScore } from "@/modules/ops/service";
+import { requiredId } from "@/lib/ids";
 
 const CONNECTED_KEYS = new Set([
   "CONNECTED",
@@ -45,15 +48,15 @@ const DISPOSITION_STATUS: Record<string, string> = {
   APPLICATION_STARTED: "APPLICATION",
   CLOSED_WON: "CLOSED_WON",
   CLOSED_LOST: "CLOSED_LOST",
-  INVALID_NUMBER: "INVALID",
-  WRONG_NUMBER: "INVALID",
-  NOT_ANSWERED: "CALL_ATTEMPTED",
-  BUSY: "CALL_ATTEMPTED",
-  SWITCHED_OFF: "CALL_ATTEMPTED",
+    INVALID_NUMBER: "INVALID",
+    WRONG_NUMBER: "WRONG_NUMBER",
+    NOT_ANSWERED: "CALL_ATTEMPTED",
+    BUSY: "NOT_AVAILABLE",
+    SWITCHED_OFF: "NOT_AVAILABLE",
 };
 
 export const logCallSchema = z.object({
-  dispositionId: z.string().uuid(),
+  dispositionId: requiredId("a call outcome"),
   notes: z.string().trim().max(4000).optional().or(z.literal("")),
   durationSec: z.coerce.number().int().min(0).max(7200).optional().or(z.literal("")),
   nextFollowupAt: z.string().optional().or(z.literal("")),
@@ -67,11 +70,13 @@ export async function listDispositions() {
   });
 }
 
-export async function listCallingQueue(actor: AuthUser) {
+export async function listCallingQueue(actor: AuthUser, clientId?: string) {
   const scope = await leadScopeWhere(actor);
+  const clientFilter = clientId ? { clientId } : {};
+  const paused = await pausedLeadIds();
   const leads = await prisma.lead.findMany({
     where: {
-      AND: [scope, { status: { isFinal: false } }],
+      AND: [scope, { status: { isFinal: false } }, clientFilter, excludePausedLeads(paused), { client: { isActive: true } }, { campaign: { isActive: true } }, { duplicateOfId: null }],
     },
     include: {
       client: { select: { id: true, name: true } },
@@ -80,10 +85,34 @@ export async function listCallingQueue(actor: AuthUser) {
       assignedUser: { select: { id: true, name: true } },
       source: true,
     },
-    orderBy: [{ nextFollowupAt: { sort: "asc", nulls: "first" } }, { createdAt: "desc" }],
+    orderBy: [{ leadScore: "desc" }, { nextFollowupAt: { sort: "asc", nulls: "first" } }, { createdAt: "desc" }],
     take: 80,
   });
   return leads.map((lead) => serializeLead(lead as unknown as Record<string, unknown>));
+}
+
+export async function callingTodayStats(actor: AuthUser, clientId?: string) {
+  const scope = await leadScopeWhere(actor);
+  const start = startOfIstDay();
+  const end = addIstDays(start, 1);
+  const clientFilter = clientId ? { clientId } : {};
+  const queueWhere = { AND: [scope, { status: { isFinal: false } }, clientFilter, excludePausedLeads(await pausedLeadIds()), { client: { isActive: true } }, { campaign: { isActive: true } }, { duplicateOfId: null }] };
+  const [queue, contacted, interested, followup, converted] = await Promise.all([
+    prisma.lead.count({ where: queueWhere }),
+    prisma.callLog.count({
+      where: { startedAt: { gte: start, lt: end }, lead: { AND: [scope, clientFilter] } },
+    }),
+    prisma.lead.count({
+      where: { AND: [scope, clientFilter, { status: { key: "INTERESTED" } }] },
+    }),
+    prisma.lead.count({
+      where: { AND: [scope, clientFilter, { status: { isFinal: false }, nextFollowupAt: { not: null } }] },
+    }),
+    prisma.lead.count({
+      where: { AND: [scope, clientFilter, { status: { key: { in: ["CLOSED_WON", "ADMISSION_CONFIRMED", "BOOKING"] } } }] },
+    }),
+  ]);
+  return { queue, contacted, interested, followup, converted };
 }
 
 export async function logCall(actor: AuthUser, leadId: string, input: z.infer<typeof logCallSchema>) {

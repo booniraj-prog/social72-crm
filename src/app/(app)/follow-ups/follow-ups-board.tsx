@@ -6,6 +6,8 @@ import { useState } from "react";
 import { formatIst } from "@/lib/time";
 import type { FollowupBucket } from "@/modules/followups/service";
 import type { LeadRow } from "@/modules/leads/types";
+import { ActionIcon } from "@/components/ui/action-icon";
+import { TableFrame } from "@/components/platform/table-controls";
 
 const BUCKETS: { key: FollowupBucket; label: string }[] = [
   { key: "overdue", label: "Overdue" },
@@ -38,11 +40,23 @@ export function FollowUpsBoard({
   bucket,
   counts,
   items,
+  clientId,
 }: {
   bucket: FollowupBucket;
   counts: Counts;
   items: Item[];
+  clientId?: string;
 }) {
+  const bucketHref = (key: FollowupBucket) => {
+    const q = new URLSearchParams({ bucket: key });
+    if (clientId) q.set("clientId", clientId);
+    return `/follow-ups?${q.toString()}`;
+  };
+  const callHref = (leadId: string) => {
+    const q = new URLSearchParams({ leadId });
+    if (clientId) q.set("clientId", clientId);
+    return `/calling?${q.toString()}`;
+  };
   const router = useRouter();
   const [error, setError] = useState("");
   const [busyId, setBusyId] = useState("");
@@ -73,17 +87,17 @@ export function FollowUpsBoard({
 
   return (
     <div>
-      <p className="text-xs uppercase tracking-[0.18em] text-ink-soft">BPO floor</p>
+      <p className="text-xs uppercase tracking-[0.18em] text-ink-soft">Demand</p>
       <h1 className="mt-2 font-display text-4xl text-ink">Follow-ups</h1>
       <p className="mt-2 text-sm text-ink-soft">
-        Today completion {counts.completionPct}% · {counts.overdue} overdue
+        Monitor the next action on every live lead. Today completion {counts.completionPct}% · {counts.overdue} overdue
       </p>
 
       <div className="mt-6 flex flex-wrap gap-2">
         {BUCKETS.map((item) => (
           <Link
             key={item.key}
-            href={`/follow-ups?bucket=${item.key}`}
+            href={bucketHref(item.key)}
             prefetch={false}
             className={`rounded-md px-3 py-1.5 text-sm ${
               bucket === item.key ? "bg-ink text-white" : "border border-line bg-white text-ink"
@@ -101,66 +115,45 @@ export function FollowUpsBoard({
       ) : null}
 
       <div className="mt-4 overflow-hidden rounded-lg border border-line bg-white">
-        <table className="w-full text-left text-sm">
-          <thead className="bg-paper-2 text-xs uppercase tracking-[0.12em] text-ink-soft">
-            <tr>
-              <th className="px-4 py-3 font-medium">Lead</th>
-              <th className="px-4 py-3 font-medium">Due</th>
-              <th className="px-4 py-3 font-medium">Action</th>
-              <th className="px-4 py-3 font-medium">Owner</th>
-              <th className="px-4 py-3 font-medium" />
-            </tr>
-          </thead>
-          <tbody>
-            {items.length === 0 ? (
-              <tr>
-                <td className="px-4 py-8 text-ink-soft" colSpan={5}>
-                  Nothing in this queue.
+        <TableFrame
+          rows={items.map((item) => ({
+            id: `${item.lead.id}-${item.followUpId ?? "lead"}`,
+            followUpId: item.followUpId,
+            leadId: item.lead.id,
+            lead: item.lead.fullName,
+            client: item.lead.client.name,
+            due: item.dueAt ? formatIst(item.dueAt) : "—",
+            action: item.action ?? "—",
+            owner: item.lead.assignedUser?.name ?? "Unassigned",
+          }))}
+          columns={["lead", "client", "due", "action", "owner"]}
+          empty="Nothing in this queue."
+          extraHeaders={<th className="px-3 py-2" />}
+          extraColSpan={1}
+          renderRow={(row) => {
+            const item = items.find((i) => i.lead.id === row.leadId && (i.followUpId ?? null) === (row.followUpId as string | null));
+            return (
+              <>
+                <td className="px-4 py-3">
+                  <Link href={callHref(String(row.leadId))} prefetch={false} className="font-medium hover:underline">
+                    {String(row.lead)}
+                  </Link>
+                  <p className="text-xs text-ink-soft">{String(row.client)}</p>
                 </td>
-              </tr>
-            ) : (
-              items.map((item) => (
-                <tr key={`${item.lead.id}-${item.followUpId ?? "lead"}`} className="border-t border-line">
-                  <td className="px-4 py-3">
-                    <Link
-                      href={`/calling?leadId=${item.lead.id}`}
-                      prefetch={false}
-                      className="font-medium hover:underline"
-                    >
-                      {item.lead.fullName}
-                    </Link>
-                    <p className="text-xs text-ink-soft">{item.lead.client.name}</p>
-                  </td>
-                  <td className="px-4 py-3 text-ink-soft">
-                    {item.dueAt ? formatIst(item.dueAt) : "—"}
-                  </td>
-                  <td className="px-4 py-3 text-ink-soft">{item.action ?? "—"}</td>
-                  <td className="px-4 py-3 text-ink-soft">{item.lead.assignedUser?.name ?? "Unassigned"}</td>
-                  <td className="px-4 py-3 text-right">
-                    {bucket === "none" ? (
-                      <Link
-                        href={`/calling?leadId=${item.lead.id}`}
-                        prefetch={false}
-                        className="text-sm text-copper hover:underline"
-                      >
-                        Call
-                      </Link>
-                    ) : (
-                      <button
-                        type="button"
-                        disabled={!!busyId}
-                        className="text-sm text-copper hover:underline disabled:opacity-50"
-                        onClick={() => complete(item)}
-                      >
-                        Complete
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
+                <td className="px-4 py-3 text-ink-soft">{String(row.due)}</td>
+                <td className="px-4 py-3 text-ink-soft">{String(row.action)}</td>
+                <td className="px-4 py-3 text-ink-soft">{String(row.owner)}</td>
+                <td className="px-4 py-3 text-right">
+                  {bucket === "none" ? (
+                    <ActionIcon action="call" href={callHref(String(row.leadId))} />
+                  ) : (
+                    <ActionIcon action="complete" disabled={!!busyId} onClick={() => item && complete(item)} />
+                  )}
+                </td>
+              </>
+            );
+          }}
+        />
       </div>
     </div>
   );

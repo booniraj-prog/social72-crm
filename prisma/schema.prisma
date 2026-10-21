@@ -24,6 +24,10 @@ model Role {
   key         String   @unique
   name        String
   description String?
+  alertEmail  String?  @map("alert_email")
+  alertPhone  String?  @map("alert_phone")
+  notifyEmail Boolean  @default(true) @map("notify_email")
+  notifySms   Boolean  @default(false) @map("notify_sms")
   createdAt   DateTime @default(now()) @map("created_at")
 
   permissions RolePermission[]
@@ -62,13 +66,21 @@ model User {
   roleId        String    @map("role_id")
   clientId      String?   @map("client_id")
   mobile        String?
-  isActive      Boolean   @default(true) @map("is_active")
-  lastLoginAt   DateTime? @map("last_login_at")
+  alertEmail    String?   @map("alert_email")
+  alertPhone    String?   @map("alert_phone")
+  notifyEmail   Boolean   @default(true) @map("notify_email")
+  notifySms     Boolean   @default(false) @map("notify_sms")
+  isActive         Boolean   @default(true) @map("is_active")
+  approvalStatus   String    @default("APPROVED") @map("approval_status")
+  lastLoginAt      DateTime? @map("last_login_at")
+  departmentId  String?   @map("department_id")
   createdAt     DateTime  @default(now()) @map("created_at")
   updatedAt     DateTime  @updatedAt @map("updated_at")
 
-  role   Role    @relation(fields: [roleId], references: [id])
-  client Client? @relation(fields: [clientId], references: [id])
+  role       Role             @relation(fields: [roleId], references: [id])
+  client     Client?          @relation(fields: [clientId], references: [id])
+  department Department?      @relation(fields: [departmentId], references: [id])
+  employee   EmployeeProfile?
 
   sessions Session[]
   accounts Account[]
@@ -95,6 +107,16 @@ model User {
   notifications     Notification[]
   auditLogs         AuditLog[]
   savedFilters      SavedFilter[]
+  engagementsOwned  Engagement[]        @relation("EngagementManager")
+  invoicesOwned     Invoice[]           @relation("InvoiceOwner")
+  expensesClaimed   Expense[]           @relation("ExpenseClaimant")
+  expensesApproved  Expense[]           @relation("ExpenseApprover")
+  licensesOwned     ToolLicense[]       @relation("LicenseOwner")
+  purchasesOwned    PurchaseOrder[]     @relation("PurchaseOwner")
+  partnersManaged   ChannelPartner[]    @relation("PartnerOwner")
+  leaveRequests     LeaveRequest[]
+  attendanceDays    AttendanceDay[]
+  deliverablesOwned Deliverable[]     @relation("DeliverableAssignee")
 
   @@index([roleId])
   @@index([clientId])
@@ -192,16 +214,25 @@ model Client {
   contactName  String?  @map("contact_name")
   contactEmail String?  @map("contact_email")
   contactPhone String?  @map("contact_phone")
+  gstin        String?
   isActive     Boolean  @default(true) @map("is_active")
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
-  industry  Industry?  @relation(fields: [industryId], references: [id])
-  users     User[]
-  campaigns Campaign[]
-  projects  Project[]
-  properties Property[]
-  leads     Lead[]
+  industry     Industry?        @relation(fields: [industryId], references: [id])
+  users        User[]
+  campaigns    Campaign[]
+  projects     Project[]
+  properties   Property[]
+  leads        Lead[]
+  engagements  Engagement[]
+  invoices     Invoice[]
+  expenses     Expense[]
+  licenses     ToolLicense[]
+  partners     ChannelPartner[]
+  institutions Institution[]
+  courses      Course[]
+  purchases    PurchaseOrder[]
 
   @@index([industryId])
   @@map("clients")
@@ -257,6 +288,19 @@ model LeadSource {
   leads Lead[]
 
   @@map("lead_sources")
+}
+
+model LeadCategory {
+  id       String  @id @default(uuid())
+  group    String
+  name     String
+  isActive Boolean @default(true) @map("is_active")
+  sortOrder Int    @default(0) @map("sort_order")
+
+  leads Lead[]
+
+  @@unique([group, name])
+  @@map("lead_categories")
 }
 
 model MarketingSpend {
@@ -429,6 +473,10 @@ model Lead {
   closureDate      DateTime? @map("closure_date") @db.Date
   closureType      String?  @map("closure_type")
   wonLostReason    String?  @map("won_lost_reason")
+  priority         String   @default("MEDIUM")
+  captureChannel   String?  @map("capture_channel")
+  serviceLine      String?  @map("service_line")
+  categoryId       String?  @map("category_id")
 
   slaAssignDueAt        DateTime? @map("sla_assign_due_at")
   slaFirstCallDueAt     DateTime? @map("sla_first_call_due_at")
@@ -437,6 +485,7 @@ model Lead {
 
   converted     Boolean   @default(false)
   duplicateOfId String?   @map("duplicate_of_id")
+  isActive      Boolean   @default(true) @map("is_active")
   deletedAt     DateTime? @map("deleted_at")
   createdAt     DateTime  @default(now()) @map("created_at")
   updatedAt     DateTime  @updatedAt @map("updated_at")
@@ -450,11 +499,13 @@ model Lead {
   assignedTeam    Team?        @relation(fields: [assignedTeamId], references: [id])
   createdBy       User?        @relation("LeadCreator", fields: [createdById], references: [id])
   lastDisposition Disposition? @relation(fields: [lastDispositionId], references: [id])
+  category        LeadCategory? @relation(fields: [categoryId], references: [id])
   duplicateOf     Lead?        @relation("LeadDuplicates", fields: [duplicateOfId], references: [id])
   duplicates      Lead[]       @relation("LeadDuplicates")
 
   education     EducationDetails?
   realEstate    RealEstateDetails?
+  serviceDetails ServiceDetails?
   assignments   LeadAssignment[]
   scoreEvents   LeadScoreEvent[]
   activities    Activity[]
@@ -468,6 +519,8 @@ model Lead {
   payments      Payment[]
   closures      Closure[]
   notifications Notification[]
+  engagements   Engagement[]
+  invoices      Invoice[]
 
   @@index([email])
   @@index([clientId])
@@ -505,8 +558,13 @@ model EducationDetails {
   fee                Decimal?  @db.Decimal(14, 2)
   scholarship        Decimal?  @db.Decimal(14, 2)
   paymentStatus      String?   @map("payment_status")
+  institutionId      String?   @map("institution_id")
+  courseId           String?   @map("course_id")
+  counsellorUserId   String?   @map("counsellor_user_id")
 
-  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  lead         Lead          @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  institution  Institution?  @relation(fields: [institutionId], references: [id])
+  program      Course?       @relation(fields: [courseId], references: [id])
 
   @@map("education_details")
 }
@@ -516,6 +574,7 @@ model Project {
   clientId  String  @map("client_id")
   name      String
   location  String?
+  description String?
   isActive  Boolean @default(true) @map("is_active")
 
   client     Client              @relation(fields: [clientId], references: [id])
@@ -534,6 +593,10 @@ model Property {
   configuration String?
   location      String?
   value         Decimal? @db.Decimal(14, 2)
+  listPrice     Decimal? @map("list_price") @db.Decimal(14, 2)
+  availability  String?  @default("available")
+  unitStatus    String?  @map("unit_status")
+  areaSqft      Decimal? @map("area_sqft") @db.Decimal(12, 2)
 
   project    Project?            @relation(fields: [projectId], references: [id])
   client     Client              @relation(fields: [clientId], references: [id])
@@ -563,10 +626,12 @@ model RealEstateDetails {
   expectedRegistrationDate  DateTime? @map("expected_registration_date") @db.Date
   registrationStatus        String?   @map("registration_status")
   propertyValue             Decimal?  @map("property_value") @db.Decimal(14, 2)
+  channelPartnerId          String?   @map("channel_partner_id")
 
-  lead     Lead      @relation(fields: [leadId], references: [id], onDelete: Cascade)
-  property Property? @relation(fields: [propertyId], references: [id])
-  project  Project?  @relation(fields: [projectId], references: [id])
+  lead           Lead            @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  property       Property?       @relation(fields: [propertyId], references: [id])
+  project        Project?        @relation(fields: [projectId], references: [id])
+  channelPartner ChannelPartner? @relation(fields: [channelPartnerId], references: [id])
 
   @@map("real_estate_details")
 }
@@ -606,7 +671,8 @@ model LeadScoreEvent {
 
 model Activity {
   id        String   @id @default(uuid())
-  leadId    String   @map("lead_id")
+  leadId    String?  @map("lead_id")
+  clientId  String?  @map("client_id")
   userId    String?  @map("user_id")
   type      String
   title     String
@@ -615,7 +681,7 @@ model Activity {
   refId     String?  @map("ref_id")
   createdAt DateTime @default(now()) @map("created_at")
 
-  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  lead Lead? @relation(fields: [leadId], references: [id], onDelete: Cascade)
   user User? @relation(fields: [userId], references: [id])
 
   @@index([leadId, createdAt])
@@ -677,19 +743,25 @@ model FollowUp {
 }
 
 model Task {
-  id          String    @id @default(uuid())
-  leadId      String?   @map("lead_id")
-  assignedTo  String?   @map("assigned_to")
-  title       String
-  dueAt       DateTime? @map("due_at")
-  completedAt DateTime? @map("completed_at")
-  createdBy   String?   @map("created_by")
-  createdAt   DateTime  @default(now()) @map("created_at")
+  id            String    @id @default(uuid())
+  leadId        String?   @map("lead_id")
+  engagementId  String?   @map("engagement_id")
+  assignedTo    String?   @map("assigned_to")
+  title         String
+  description   String?
+  status        String    @default("OPEN")
+  priority      String    @default("MEDIUM")
+  dueAt         DateTime? @map("due_at")
+  completedAt   DateTime? @map("completed_at")
+  createdBy     String?   @map("created_by")
+  createdAt     DateTime  @default(now()) @map("created_at")
 
-  lead     Lead? @relation(fields: [leadId], references: [id], onDelete: Cascade)
-  assignee User? @relation("TaskAssignee", fields: [assignedTo], references: [id])
-  creator  User? @relation("TaskCreator", fields: [createdBy], references: [id])
+  lead        Lead?       @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  engagement  Engagement? @relation(fields: [engagementId], references: [id], onDelete: SetNull)
+  assignee    User?       @relation("TaskAssignee", fields: [assignedTo], references: [id])
+  creator     User?       @relation("TaskCreator", fields: [createdBy], references: [id])
 
+  @@index([assignedTo, dueAt])
   @@map("tasks")
 }
 
@@ -799,14 +871,20 @@ model ImportError {
 }
 
 model Notification {
-  id        String    @id @default(uuid())
-  userId    String    @map("user_id")
-  type      String
-  title     String
-  body      String?
-  leadId    String?   @map("lead_id")
-  readAt    DateTime? @map("read_at")
-  createdAt DateTime  @default(now()) @map("created_at")
+  id         String    @id @default(uuid())
+  userId     String    @map("user_id")
+  type       String
+  title      String
+  body       String?
+  leadId     String?   @map("lead_id")
+  entityType String?   @map("entity_type")
+  entityId   String?   @map("entity_id")
+  emailTo    String?   @map("email_to")
+  phoneTo    String?   @map("phone_to")
+  emailQueued Boolean  @default(false) @map("email_queued")
+  smsQueued   Boolean  @default(false) @map("sms_queued")
+  readAt     DateTime? @map("read_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
 
   user User  @relation(fields: [userId], references: [id], onDelete: Cascade)
   lead Lead? @relation(fields: [leadId], references: [id])
@@ -843,4 +921,360 @@ model SavedFilter {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("saved_filters")
+}
+
+model Department {
+  id   String @id @default(uuid())
+  name String
+  key  String @unique
+
+  users User[]
+
+  @@map("departments")
+}
+
+model EmployeeProfile {
+  userId             String    @id @map("user_id")
+  employeeNo         String?   @map("employee_no")
+  designation        String?
+  joiningDate        DateTime? @map("joining_date") @db.Date
+  exitDate           DateTime? @map("exit_date") @db.Date
+  targetAmount       Decimal?  @map("target_amount") @db.Decimal(14, 2)
+  reportingManagerId String?   @map("reporting_manager_id")
+  skills             String?
+  salaryAmount       Decimal?  @map("salary_amount") @db.Decimal(14, 2)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("employee_profiles")
+}
+
+model LeaveRequest {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  type      String   @default("CASUAL")
+  fromDate  DateTime @map("from_date") @db.Date
+  toDate    DateTime @map("to_date") @db.Date
+  status    String   @default("PENDING")
+  notes     String?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status])
+  @@map("leave_requests")
+}
+
+model AttendanceDay {
+  id      String    @id @default(uuid())
+  userId  String    @map("user_id")
+  day     DateTime  @db.Date
+  status  String    @default("PRESENT")
+  checkIn DateTime? @map("check_in")
+  checkOut DateTime? @map("check_out")
+  notes   String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, day])
+  @@map("attendance_days")
+}
+
+model ChannelPartner {
+  id            String   @id @default(uuid())
+  clientId      String?  @map("client_id")
+  ownerUserId   String?  @map("owner_user_id")
+  name          String
+  mobile        String?
+  email         String?
+  commissionPct Int      @default(0) @map("commission_pct")
+  isActive      Boolean  @default(true) @map("is_active")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  client     Client?             @relation(fields: [clientId], references: [id])
+  owner      User?               @relation("PartnerOwner", fields: [ownerUserId], references: [id])
+  reDetails  RealEstateDetails[]
+
+  @@map("channel_partners")
+}
+
+model Institution {
+  id       String  @id @default(uuid())
+  clientId String  @map("client_id")
+  name     String
+  city     String?
+  isActive Boolean @default(true) @map("is_active")
+
+  client  Client              @relation(fields: [clientId], references: [id])
+  courses Course[]
+  details EducationDetails[]
+
+  @@map("institutions")
+}
+
+model Course {
+  id            String   @id @default(uuid())
+  clientId      String   @map("client_id")
+  institutionId String?  @map("institution_id")
+  name          String
+  fee           Decimal? @db.Decimal(14, 2)
+  isActive      Boolean  @default(true) @map("is_active")
+
+  client       Client              @relation(fields: [clientId], references: [id])
+  institution  Institution?        @relation(fields: [institutionId], references: [id])
+  details      EducationDetails[]
+
+  @@map("courses")
+}
+
+model ServiceDetails {
+  leadId         String   @id @map("lead_id")
+  serviceLine    String?  @map("service_line")
+  requirement    String?
+  proposalValue  Decimal? @map("proposal_value") @db.Decimal(14, 2)
+  milestone      String?
+
+  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@map("service_details")
+}
+
+model Engagement {
+  id          String    @id @default(uuid())
+  clientId    String    @map("client_id")
+  leadId      String?   @map("lead_id")
+  managerId   String?   @map("manager_id")
+  name        String
+  serviceLine String?   @map("service_line")
+  status      String    @default("OPEN")
+  budget      Decimal   @default(0) @db.Decimal(14, 2)
+  billed      Decimal   @default(0) @db.Decimal(14, 2)
+  cost        Decimal   @default(0) @db.Decimal(14, 2)
+  startDate   DateTime? @map("start_date") @db.Date
+  dueDate     DateTime? @map("due_date") @db.Date
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  client   Client   @relation(fields: [clientId], references: [id])
+  lead     Lead?    @relation(fields: [leadId], references: [id])
+  manager  User?    @relation("EngagementManager", fields: [managerId], references: [id])
+  tasks    Task[]
+  invoices Invoice[]
+  expenses Expense[]
+  licenses ToolLicense[]
+  purchases PurchaseOrder[]
+  deliverables Deliverable[]
+
+  @@index([clientId])
+  @@map("engagements")
+}
+
+model Deliverable {
+  id            String    @id @default(uuid())
+  engagementId  String    @map("engagement_id")
+  assignedTo    String?   @map("assigned_to")
+  title         String
+  description   String?
+  status        String    @default("PENDING")
+  priority      String    @default("MEDIUM")
+  dueDate       DateTime? @map("due_date") @db.Date
+  revisionCount Int       @default(0) @map("revision_count")
+  submittedAt   DateTime? @map("submitted_at")
+  approvedAt    DateTime? @map("approved_at")
+  notes         String?
+  createdAt     DateTime  @default(now()) @map("created_at")
+
+  engagement Engagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+  assignee   User?      @relation("DeliverableAssignee", fields: [assignedTo], references: [id])
+
+  @@index([engagementId, dueDate])
+  @@map("deliverables")
+}
+
+model ToolLicense {
+  id              String    @id @default(uuid())
+  name            String
+  vendor          String?
+  category        String?
+  licenseType     String?   @map("license_type")
+  licenseKey      String?   @map("license_key")
+  seats           Int       @default(1)
+  clientId        String?   @map("client_id")
+  engagementId    String?   @map("engagement_id")
+  ownerUserId     String?   @map("owner_user_id")
+  purchaseDate    DateTime? @map("purchase_date") @db.Date
+  startDate       DateTime? @map("start_date") @db.Date
+  expiryDate      DateTime? @map("expiry_date") @db.Date
+  amount          Decimal   @default(0) @db.Decimal(14, 2)
+  billingCycle    String    @default("YEARLY") @map("billing_cycle")
+  autoRenew       Boolean   @default(false) @map("auto_renew")
+  accountRef      String?   @map("account_ref")
+  notes           String?
+  status          String    @default("APPROVED")
+  createdAt       DateTime  @default(now()) @map("created_at")
+
+  client     Client?     @relation(fields: [clientId], references: [id])
+  engagement Engagement? @relation(fields: [engagementId], references: [id])
+  owner      User?       @relation("LicenseOwner", fields: [ownerUserId], references: [id])
+
+  @@index([expiryDate])
+  @@map("tool_licenses")
+}
+
+model Vendor {
+  id          String  @id @default(uuid())
+  name        String
+  email       String?
+  phone       String?
+  gstin       String?
+  contactName String? @map("contact_name")
+  category    String?
+  bankDetails String? @map("bank_details")
+  notes       String?
+  isActive    Boolean @default(true) @map("is_active")
+
+  purchases PurchaseOrder[]
+  expenses  Expense[]
+
+  @@map("vendors")
+}
+
+model PurchaseOrder {
+  id          String    @id @default(uuid())
+  number      String    @unique
+  clientId    String?   @map("client_id")
+  vendorId    String?   @map("vendor_id")
+  ownerUserId String?   @map("owner_user_id")
+  engagementId String?  @map("engagement_id")
+  title       String
+  status      String    @default("REQUESTED")
+  amount      Decimal   @default(0) @db.Decimal(14, 2)
+  orderedAt   DateTime? @map("ordered_at") @db.Date
+  deliveredAt DateTime? @map("delivered_at") @db.Date
+  notes       String?
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  client Client? @relation(fields: [clientId], references: [id])
+  vendor Vendor? @relation(fields: [vendorId], references: [id])
+  owner  User?   @relation("PurchaseOwner", fields: [ownerUserId], references: [id])
+  engagement Engagement? @relation(fields: [engagementId], references: [id])
+
+  @@map("purchase_orders")
+}
+
+model Invoice {
+  id          String    @id @default(uuid())
+  number      String    @unique
+  clientId    String    @map("client_id")
+  leadId      String?   @map("lead_id")
+  engagementId String?  @map("engagement_id")
+  ownerUserId String?   @map("owner_user_id")
+  kind        String    @default("INVOICE")
+  status      String    @default("DRAFT")
+  issueDate   DateTime  @default(now()) @map("issue_date") @db.Date
+  dueDate     DateTime? @map("due_date") @db.Date
+  subtotal    Decimal   @default(0) @db.Decimal(14, 2)
+  gstPct      Decimal   @default(18) @map("gst_pct") @db.Decimal(5, 2)
+  total       Decimal   @default(0) @db.Decimal(14, 2)
+  paid        Decimal   @default(0) @db.Decimal(14, 2)
+  notes        String?
+  paymentTerms String?   @map("payment_terms")
+  plannedAd      Decimal @default(0) @map("planned_ad") @db.Decimal(14, 2)
+  plannedVendor  Decimal @default(0) @map("planned_vendor") @db.Decimal(14, 2)
+  plannedTools   Decimal @default(0) @map("planned_tools") @db.Decimal(14, 2)
+  plannedPeople  Decimal @default(0) @map("planned_people") @db.Decimal(14, 2)
+  discountPct    Decimal @default(0) @map("discount_pct") @db.Decimal(5, 2)
+  discountAmt    Decimal @default(0) @map("discount_amt") @db.Decimal(14, 2)
+  costingJson    String? @map("costing_json")
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  client     Client      @relation(fields: [clientId], references: [id])
+  lead       Lead?       @relation(fields: [leadId], references: [id])
+  engagement Engagement? @relation(fields: [engagementId], references: [id])
+  owner      User?       @relation("InvoiceOwner", fields: [ownerUserId], references: [id])
+  lines      InvoiceLine[]
+
+  @@index([clientId, status])
+  @@map("invoices")
+}
+
+model InvoiceLine {
+  id          String  @id @default(uuid())
+  invoiceId   String  @map("invoice_id")
+  description String
+  qty         Decimal @default(1) @db.Decimal(10, 2)
+  rate        Decimal @default(0) @db.Decimal(14, 2)
+  amount      Decimal @default(0) @db.Decimal(14, 2)
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@map("invoice_lines")
+}
+
+model Expense {
+  id           String    @id @default(uuid())
+  claimantId   String    @map("claimant_id")
+  approverId   String?   @map("approver_id")
+  clientId     String?   @map("client_id")
+  engagementId String?   @map("engagement_id")
+  vendorId     String?   @map("vendor_id")
+  category     String
+  amount       Decimal   @db.Decimal(14, 2)
+  spentOn      DateTime  @map("spent_on") @db.Date
+  status       String    @default("SUBMITTED")
+  notes        String?
+  receiptUrl   String?   @map("receipt_url")
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  claimant   User        @relation("ExpenseClaimant", fields: [claimantId], references: [id])
+  approver   User?       @relation("ExpenseApprover", fields: [approverId], references: [id])
+  client     Client?     @relation(fields: [clientId], references: [id])
+  engagement Engagement? @relation(fields: [engagementId], references: [id])
+  vendor     Vendor?     @relation(fields: [vendorId], references: [id])
+
+  @@index([claimantId, status])
+  @@map("expenses")
+}
+
+model Attachment {
+  id         String   @id @default(uuid())
+  entityType String   @map("entity_type")
+  entityId   String   @map("entity_id")
+  filename   String
+  url        String
+  uploadedBy String?  @map("uploaded_by")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([entityType, entityId])
+  @@map("attachments")
+}
+
+model TrashItem {
+  id         String    @id @default(uuid())
+  entityType String    @map("entity_type")
+  entityId   String    @map("entity_id")
+  title      String
+  summary    String?
+  payload    String
+  deletedBy  String    @map("deleted_by")
+  deletedAt  DateTime  @default(now()) @map("deleted_at")
+  purgeAt    DateTime  @map("purge_at")
+  restoredAt DateTime? @map("restored_at")
+
+  @@index([restoredAt, purgeAt])
+  @@map("trash_items")
+}
+
+model NurtureTemplate {
+  id        String   @id @default(uuid())
+  name      String
+  channel   String   @default("whatsapp")
+  journey   String   @default("general")
+  dayOffset Int      @default(0) @map("day_offset")
+  body      String
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([journey, dayOffset])
+  @@map("nurture_templates")
 }

@@ -232,7 +232,7 @@ export async function seedBpoAndLeads(prisma: PrismaClient) {
   const now = new Date();
 
   let created = 0;
-  for (let i = 0; i < 40; i++) {
+  for (let i = 0; i < 4; i++) {
     const [firstName, lastName] = PEOPLE[i];
     const [city, state] = CITIES[i % CITIES.length];
     const statusKey = STATUS_CYCLE[i % STATUS_CYCLE.length];

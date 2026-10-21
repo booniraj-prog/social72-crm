@@ -2,6 +2,10 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { controlClass, Field, FormBanner, focusInvalid } from "@/components/platform/form-field";
+import { ActionIcon, ActionsHeader } from "@/components/ui/action-icon";
+import { ActiveToggle } from "@/components/platform/active-toggle";
+import { TableFrame } from "@/components/platform/table-controls";
 
 type Industry = { id: string; name: string };
 type ClientRow = {
@@ -34,69 +38,67 @@ export function ClientsManager({
     <div>
       <div className="flex items-end justify-between gap-4">
         <div>
-          <p className="text-xs uppercase tracking-[0.18em] text-ink-soft">Marketing</p>
+          <p className="text-xs uppercase tracking-[0.18em] text-ink-soft">Company</p>
           <h1 className="mt-2 font-display text-4xl text-ink">Clients</h1>
+          <p className="mt-2 max-w-xl text-sm text-ink-soft">
+            Onboard clients so campaigns, projects, POs and invoices stay isolated per account.
+          </p>
         </div>
         {canWrite ? (
-          <button
-            type="button"
+          <ActionIcon
+            action="new"
+            label="New client"
             onClick={() => {
               setEditing(null);
               setError("");
               setOpen(true);
             }}
-            className="h-10 rounded-md bg-copper px-4 text-sm font-medium text-white hover:bg-copper-dark"
-          >
-            New client
-          </button>
+          />
         ) : null}
       </div>
 
       <div className="mt-8 overflow-hidden rounded-lg border border-line bg-white">
-        <table className="w-full text-left text-sm">
-          <thead className="bg-paper-2 text-xs uppercase tracking-[0.12em] text-ink-soft">
-            <tr>
-              <th className="px-4 py-3 font-medium">Client</th>
-              <th className="px-4 py-3 font-medium">Industry</th>
-              <th className="px-4 py-3 font-medium">Contact</th>
-              <th className="px-4 py-3 font-medium">Status</th>
-              {canWrite ? <th className="px-4 py-3 font-medium" /> : null}
-            </tr>
-          </thead>
-          <tbody>
-            {clients.length === 0 ? (
-              <tr>
-                <td className="px-4 py-8 text-ink-soft" colSpan={5}>
-                  No clients yet. Create the first Social72 customer to isolate campaigns and leads.
+        <TableFrame
+          rows={clients.map((c) => ({
+            ...c,
+            client: c.name,
+            industry: c.industry?.name ?? "—",
+            contact: c.contactName ?? "—",
+            status: c.isActive ? "Active" : "Paused",
+          }))}
+          columns={["client", "industry", "contact", "status"]}
+          empty="No clients yet. Onboard the first Social72 client to isolate campaigns, projects and leads."
+          extraHeaders={canWrite ? <ActionsHeader className="px-4 py-3" /> : null}
+          extraColSpan={canWrite ? 1 : 0}
+          rowClassName={(client) => `border-t border-line ${client.isActive ? "" : "opacity-60"}`}
+          renderRow={(client) => (
+            <>
+              <td className="px-4 py-3">
+                <a className="text-copper underline" href={`/clients/${client.id}`}>
+                  {client.name}
+                </a>
+              </td>
+              <td className="px-4 py-3 text-ink-soft">{String(client.industry)}</td>
+              <td className="px-4 py-3 text-ink-soft">{String(client.contact)}</td>
+              <td className="px-4 py-3">{String(client.status)}</td>
+              {canWrite ? (
+                <td className="px-4 py-3 text-right">
+                  <span className="flex justify-end gap-0.5">
+                    <ActiveToggle entity="client" id={client.id} active={client.isActive} name={client.name} />
+                    <ActionIcon
+                      action="edit"
+                      onClick={() => {
+                        setEditing(clients.find((c) => c.id === client.id) ?? null);
+                        setError("");
+                        setOpen(true);
+                      }}
+                    />
+                  </span>
                 </td>
-              </tr>
-            ) : (
-              clients.map((client) => (
-                <tr key={client.id} className="border-t border-line">
-                  <td className="px-4 py-3">{client.name}</td>
-                  <td className="px-4 py-3 text-ink-soft">{client.industry?.name ?? "—"}</td>
-                  <td className="px-4 py-3 text-ink-soft">{client.contactName ?? "—"}</td>
-                  <td className="px-4 py-3">{client.isActive ? "Active" : "Inactive"}</td>
-                  {canWrite ? (
-                    <td className="px-4 py-3 text-right">
-                      <button
-                        type="button"
-                        className="text-sm text-copper hover:underline"
-                        onClick={() => {
-                          setEditing(client);
-                          setError("");
-                          setOpen(true);
-                        }}
-                      >
-                        Edit
-                      </button>
-                    </td>
-                  ) : null}
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
+              ) : null}
+            </>
+          )}
+        />
       </div>
 
       {open && canWrite ? (
@@ -151,16 +153,27 @@ function ClientDialog({
   const [contactEmail, setContactEmail] = useState(client?.contactEmail ?? "");
   const [contactPhone, setContactPhone] = useState(client?.contactPhone ?? "");
   const [isActive, setIsActive] = useState(client?.isActive ?? true);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const title = useMemo(() => (client ? "Edit client" : "New client"), [client]);
 
   return (
     <div className="fixed inset-0 z-20 flex items-center justify-center bg-ink/40 p-4">
       <form
+        noValidate
         className="w-full max-w-md rounded-lg bg-paper p-6"
         onSubmit={(e) => {
           e.preventDefault();
+          const next: Record<string, string> = {};
+          if (!name.trim()) next.name = "Client name is required";
+          if (contactEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactEmail.trim())) next.contactEmail = "Enter a valid email address";
+          if (contactPhone && !/^[0-9+\-\s]{8,20}$/.test(contactPhone)) next.contactPhone = "Enter a valid phone number";
+          setFieldErrors(next);
+          if (Object.keys(next).length > 0) {
+            requestAnimationFrame(() => focusInvalid(e.currentTarget));
+            return;
+          }
           void onSave({
-            name,
+            name: name.trim(),
             industryId: industryId || null,
             contactName,
             contactEmail,
@@ -170,18 +183,13 @@ function ClientDialog({
         }}
       >
         <h2 className="font-display text-2xl">{title}</h2>
+        <FormBanner message={error} />
         <div className="mt-5 flex flex-col gap-3 text-sm">
-          <label className="flex flex-col gap-1">
-            <span className="text-ink-soft">Client name</span>
-            <input required value={name} onChange={(e) => setName(e.target.value)} className="h-10 rounded-md border border-line bg-white px-3" />
-          </label>
-          <label className="flex flex-col gap-1">
-            <span className="text-ink-soft">Industry</span>
-            <select
-              value={industryId}
-              onChange={(e) => setIndustryId(e.target.value)}
-              className="h-10 rounded-md border border-line bg-white px-3"
-            >
+          <Field label="Client name" required error={fieldErrors.name}>
+            <input value={name} aria-invalid={Boolean(fieldErrors.name)} onChange={(e) => { setName(e.target.value); setFieldErrors((c) => ({ ...c, name: "" })); }} className={controlClass(Boolean(fieldErrors.name))} />
+          </Field>
+          <Field label="Industry">
+            <select value={industryId} onChange={(e) => setIndustryId(e.target.value)} className={controlClass()}>
               <option value="">Select industry</option>
               {industries.map((industry) => (
                 <option key={industry.id} value={industry.id}>
@@ -189,36 +197,24 @@ function ClientDialog({
                 </option>
               ))}
             </select>
-          </label>
-          <label className="flex flex-col gap-1">
-            <span className="text-ink-soft">Contact name</span>
-            <input value={contactName} onChange={(e) => setContactName(e.target.value)} className="h-10 rounded-md border border-line bg-white px-3" />
-          </label>
-          <label className="flex flex-col gap-1">
-            <span className="text-ink-soft">Contact email</span>
-            <input type="email" value={contactEmail} onChange={(e) => setContactEmail(e.target.value)} className="h-10 rounded-md border border-line bg-white px-3" />
-          </label>
-          <label className="flex flex-col gap-1">
-            <span className="text-ink-soft">Contact phone</span>
-            <input value={contactPhone} onChange={(e) => setContactPhone(e.target.value)} className="h-10 rounded-md border border-line bg-white px-3" />
-          </label>
+          </Field>
+          <Field label="Contact name">
+            <input value={contactName} onChange={(e) => setContactName(e.target.value)} className={controlClass()} />
+          </Field>
+          <Field label="Contact email" error={fieldErrors.contactEmail}>
+            <input type="email" value={contactEmail} aria-invalid={Boolean(fieldErrors.contactEmail)} onChange={(e) => { setContactEmail(e.target.value); setFieldErrors((c) => ({ ...c, contactEmail: "" })); }} className={controlClass(Boolean(fieldErrors.contactEmail))} />
+          </Field>
+          <Field label="Contact phone" error={fieldErrors.contactPhone}>
+            <input value={contactPhone} aria-invalid={Boolean(fieldErrors.contactPhone)} onChange={(e) => { setContactPhone(e.target.value); setFieldErrors((c) => ({ ...c, contactPhone: "" })); }} className={controlClass(Boolean(fieldErrors.contactPhone))} />
+          </Field>
           <label className="flex items-center gap-2 text-ink-soft">
             <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} />
             Active
           </label>
         </div>
-        {error ? <p className="mt-3 text-sm text-danger">{error}</p> : null}
         <div className="mt-6 flex justify-end gap-2">
-          <button type="button" onClick={onClose} className="h-10 px-3 text-sm text-ink-soft">
-            Cancel
-          </button>
-          <button
-            type="submit"
-            disabled={saving}
-            className="h-10 rounded-md bg-copper px-4 text-sm font-medium text-white disabled:opacity-60"
-          >
-            {saving ? "Saving…" : "Save"}
-          </button>
+          <ActionIcon action="cancel" onClick={onClose} />
+          <ActionIcon type="submit" action="save" disabled={saving} />
         </div>
       </form>
     </div>

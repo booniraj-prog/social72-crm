@@ -11,7 +11,13 @@ export const PLATFORMS = [
 
 export const CAMPAIGN_TYPES = ["lead_gen", "brand", "retargeting", "other"] as const;
 
-export const INVALID_STATUS_KEYS = ["INVALID", "DUPLICATE", "DO_NOT_CALL"] as const;
+export const INVALID_STATUS_KEYS = [
+  "INVALID",
+  "DUPLICATE",
+  "DO_NOT_CALL",
+  "WRONG_NUMBER",
+  "UNWANTED",
+] as const;
 
 export const QUALIFIED_STATUS_KEYS = [
   "QUALIFIED",

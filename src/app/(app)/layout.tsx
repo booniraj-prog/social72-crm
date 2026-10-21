@@ -24,6 +24,8 @@ export default async function AuthenticatedLayout({
         leadName: n.lead?.fullName ?? null,
         readAt: n.readAt?.toISOString() ?? null,
         createdAt: n.createdAt.toISOString(),
+        emailTo: n.emailTo ?? null,
+        phoneTo: n.phoneTo ?? null,
       }))}
     >
       {children}

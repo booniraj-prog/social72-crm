@@ -1,7 +1,7 @@
 import { PrismaClient } from "@prisma/client";
 import { hashPassword } from "better-auth/crypto";
 import { seedBpoAndLeads } from "./sample-floor";
-import { seedRealEstate } from "./sample-real-estate";
+import { shapeDemoFloor } from "./shape-demo-floor";
 
 const prisma = new PrismaClient();
 
@@ -25,6 +25,7 @@ const ROLE_PERMISSIONS: Record<string, string[] | "*"> = {
   crm_manager: [
     "user.read",
     "client.read",
+    "client.write",
     "campaign.read",
     "campaign.write",
     "lead.read",
@@ -42,6 +43,7 @@ const ROLE_PERMISSIONS: Record<string, string[] | "*"> = {
   bpo_executive: ["lead.read", "lead.write"],
   marketing_manager: [
     "client.read",
+    "client.write",
     "campaign.read",
     "campaign.write",
     "lead.read",
@@ -49,6 +51,19 @@ const ROLE_PERMISSIONS: Record<string, string[] | "*"> = {
     "report.export",
   ],
   client: ["campaign.read", "lead.read", "report.read"],
+  sales_manager: [
+    "client.read",
+    "campaign.read",
+    "lead.read",
+    "lead.write",
+    "lead.assign",
+    "report.read",
+    "report.export",
+  ],
+  project_manager: ["lead.read", "client.read", "report.read"],
+  accounts: ["client.read", "report.read", "report.export"],
+  hr_admin: ["user.read", "client.read", "report.read"],
+  employee: ["lead.read"],
 };
 
 const STATUSES: Array<{
@@ -88,7 +103,16 @@ const STATUSES: Array<{
   { key: "DUPLICATE", name: "Duplicate", color: "#57534d", isFinal: true, sortOrder: 180, description: "Merged or duplicate" },
   { key: "INVALID", name: "Invalid", color: "#57534d", isFinal: true, sortOrder: 190, description: "Bad data" },
   { key: "DO_NOT_CALL", name: "Do not call", color: "#7f1d1d", isFinal: true, sortOrder: 200, description: "DNC / opted out" },
+  { key: "WRONG_NUMBER", name: "Wrong number", color: "#b91c1c", isFinal: true, sortOrder: 191, description: "Number belongs to someone else or is incorrect" },
+  { key: "UNWANTED", name: "Unwanted", color: "#7c2d12", isFinal: true, sortOrder: 201, description: "Do not pursue — junk or out of market" },
   { key: "NURTURE", name: "Nurture", color: "#6d28d9", isFinal: false, sortOrder: 210, description: "Long-term nurture" },
+  { key: "REQUIREMENT", name: "Requirement", color: "#1d4ed8", isFinal: false, sortOrder: 220, description: "Service requirement gathering" },
+  { key: "PROPOSAL_SENT", name: "Proposal sent", color: "#4338ca", isFinal: false, sortOrder: 230, description: "Proposal / quotation shared" },
+  { key: "IN_DELIVERY", name: "In delivery", color: "#0f766e", isFinal: false, sortOrder: 240, description: "Won job in delivery" },
+  { key: "PROJECT_STARTED", name: "Project started", color: "#0f766e", isFinal: false, sortOrder: 250, description: "Won and project kicked off" },
+  { key: "NO_RESPONSE", name: "No response", color: "#57534d", isFinal: false, sortOrder: 260, description: "Unreachable / no response" },
+  { key: "NOT_AVAILABLE", name: "Not available", color: "#b45309", isFinal: false, sortOrder: 261, description: "Busy, switched off, or asked to try later" },
+  { key: "FUTURE_REQUIREMENT", name: "Future requirement", color: "#6d28d9", isFinal: false, sortOrder: 270, description: "Nurture for later" },
 ];
 
 async function main() {
@@ -110,6 +134,11 @@ async function main() {
     { key: "bpo_executive", name: "BPO Executive", description: "Assigned leads only" },
     { key: "marketing_manager", name: "Digital Marketing Manager", description: "Campaigns and import" },
     { key: "client", name: "Client", description: "Future portal — own client data only" },
+    { key: "sales_manager", name: "Sales Manager", description: "Sales and conversion" },
+    { key: "project_manager", name: "Project Manager", description: "Delivery projects and tasks" },
+    { key: "accounts", name: "Accounts", description: "Invoices, purchases, expenses" },
+    { key: "hr_admin", name: "HR / Admin", description: "People, licenses, expenses" },
+    { key: "employee", name: "Employee", description: "Own tasks and expenses" },
   ];
 
   for (const role of roles) {
@@ -136,6 +165,14 @@ async function main() {
     update: { name: "Real Estate" },
     create: { key: "real_estate", name: "Real Estate" },
   });
+  const services = await prisma.industry.upsert({
+    where: { key: "services" },
+    update: { name: "Services" },
+    create: { key: "services", name: "Services" },
+  });
+
+  const { ensureIndustries } = await import("../src/modules/clients/service");
+  await ensureIndustries();
 
   await prisma.pipeline.upsert({
     where: { id: "seed-pipeline-education" },
@@ -154,6 +191,16 @@ async function main() {
       id: "seed-pipeline-real-estate",
       industryId: realEstate.id,
       name: "Real estate sales",
+      isDefault: true,
+    },
+  });
+  await prisma.pipeline.upsert({
+    where: { id: "seed-pipeline-services" },
+    update: { name: "Service delivery", isDefault: true, industryId: services.id },
+    create: {
+      id: "seed-pipeline-services",
+      industryId: services.id,
+      name: "Service delivery",
       isDefault: true,
     },
   });
@@ -230,6 +277,29 @@ async function main() {
     });
   }
 
+  const serviceStages = [
+    { name: "Lead", key: "NEW", sortOrder: 10 },
+    { name: "Requirement", key: "REQUIREMENT", sortOrder: 20 },
+    { name: "Proposal", key: "PROPOSAL_SENT", sortOrder: 30 },
+    { name: "Negotiation", key: "NEGOTIATION", sortOrder: 40 },
+    { name: "Won", key: "CLOSED_WON", sortOrder: 50 },
+    { name: "Delivery", key: "IN_DELIVERY", sortOrder: 60 },
+    { name: "Payment", key: "PAYMENT_PENDING", sortOrder: 70 },
+  ];
+  await prisma.pipelineStage.deleteMany({ where: { pipelineId: "seed-pipeline-services" } });
+  for (const stage of serviceStages) {
+    const status = await prisma.leadStatus.findUnique({ where: { key: stage.key } });
+    if (!status) continue;
+    await prisma.pipelineStage.create({
+      data: {
+        pipelineId: "seed-pipeline-services",
+        statusId: status.id,
+        name: stage.name,
+        sortOrder: stage.sortOrder,
+      },
+    });
+  }
+
   const dispositions = [
     "CONNECTED",
     "NOT_ANSWERED",
@@ -263,6 +333,53 @@ async function main() {
     });
   }
 
+  const sources = [
+    ["Website", "website"],
+    ["Google", "google"],
+    ["Facebook", "facebook"],
+    ["Instagram", "instagram"],
+    ["LinkedIn", "linkedin"],
+    ["WhatsApp", "whatsapp"],
+    ["Phone", "phone"],
+    ["Referral", "referral"],
+    ["BNI", "bni"],
+    ["Existing Customer", "existing_customer"],
+    ["Campaign", "campaign"],
+    ["YouTube", "youtube"],
+    ["Other", "other"],
+  ] as const;
+  for (const [name, platform] of sources) {
+    const id = `seed-source-${platform}`;
+    await prisma.leadSource.upsert({
+      where: { id },
+      update: { name, platform, isActive: true },
+      create: { id, name, platform, isActive: true },
+    });
+  }
+
+  const categories: Array<{ group: string; name: string }> = [
+    { group: "Digital Marketing", name: "Social Media Marketing" },
+    { group: "Digital Marketing", name: "SEO" },
+    { group: "Digital Marketing", name: "Google Ads" },
+    { group: "Digital Marketing", name: "Meta Ads" },
+    { group: "Digital Marketing", name: "Lead Generation" },
+    { group: "Digital Marketing", name: "Branding" },
+    { group: "Digital Marketing", name: "Creative Services" },
+    { group: "Technology", name: "Website Design" },
+    { group: "Technology", name: "Website Development" },
+    { group: "Technology", name: "Software Development" },
+    { group: "Technology", name: "Mobile App Development" },
+    { group: "Technology", name: "CRM Development" },
+    { group: "Technology", name: "Custom Software" },
+  ];
+  for (const [i, cat] of categories.entries()) {
+    await prisma.leadCategory.upsert({
+      where: { group_name: { group: cat.group, name: cat.name } },
+      update: { isActive: true, sortOrder: (i + 1) * 10 },
+      create: { ...cat, sortOrder: (i + 1) * 10 },
+    });
+  }
+
   const scoring = [
     { eventKey: "responded", points: 10, description: "Lead responded" },
     { eventKey: "interested", points: 10, description: "Interested" },
@@ -274,7 +391,9 @@ async function main() {
     { eventKey: "not_reachable", points: -10, description: "Not reachable repeatedly" },
     { eventKey: "low_budget", points: -15, description: "Low budget" },
     { eventKey: "not_interested", points: -20, description: "Not interested" },
-    { eventKey: "invalid", points: -30, description: "Invalid lead" },
+    { eventKey: "invalid", points: -30, description: "Invalid or wrong number" },
+    { eventKey: "do_not_call", points: -25, description: "Asked not to call" },
+    { eventKey: "unwanted", points: -25, description: "Unwanted / out of market" },
   ];
   for (const rule of scoring) {
     await prisma.scoringRule.upsert({
@@ -282,6 +401,20 @@ async function main() {
       update: rule,
       create: rule,
     });
+  }
+
+  const journeys = [
+    { name: "Day 1 intro", journey: "general", dayOffset: 1, body: "Hi {{name}}, thanks for enquiring with Social72. We will share a brief shortly." },
+    { name: "Day 3 brochure", journey: "general", dayOffset: 3, body: "Hi {{name}}, here is more on how Social72 runs campaigns and calling." },
+    { name: "Day 7 follow-up", journey: "general", dayOffset: 7, body: "Hi {{name}}, checking if you would like a 15-min call this week." },
+    { name: "Day 14 offer", journey: "general", dayOffset: 14, body: "Hi {{name}}, we can lock a start date this month if the brief is ready." },
+    { name: "Day 30 re-engage", journey: "general", dayOffset: 30, body: "Hi {{name}}, circling back in case the requirement is active again." },
+  ];
+  for (const tpl of journeys) {
+    const exists = await prisma.nurtureTemplate.findFirst({ where: { name: tpl.name, journey: tpl.journey } });
+    if (!exists) {
+      await prisma.nurtureTemplate.create({ data: { ...tpl, channel: "whatsapp" } });
+    }
   }
 
   await prisma.slaRule.upsert({
@@ -311,6 +444,21 @@ async function main() {
     create: {
       key: "locale",
       value: { timezone: "Asia/Kolkata", currency: "INR", language: "en" },
+    },
+  });
+
+  await prisma.setting.upsert({
+    where: { key: "ingest" },
+    update: {},
+    create: { key: "ingest", value: { key: "change-me-ingest" } },
+  });
+
+  await prisma.setting.upsert({
+    where: { key: "meta" },
+    update: {},
+    create: {
+      key: "meta",
+      value: { verifyToken: "", pageId: "", graphVersion: "v21.0", forms: [] },
     },
   });
 
@@ -349,7 +497,7 @@ async function main() {
   }
 
   await seedBpoAndLeads(prisma);
-  await seedRealEstate(prisma);
+  await shapeDemoFloor(prisma);
 }
 
 

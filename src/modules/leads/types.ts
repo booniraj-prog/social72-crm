@@ -28,6 +28,7 @@ export type LeadRow = {
   assignedUser: { id: string; name: string } | null;
   source: { id: string; name: string } | null;
   industry: { id: string; key: string; name: string };
+  isActive: boolean;
 };
 
 export type LeadDetail = LeadRow & {
@@ -73,10 +74,6 @@ export type LeadDetail = LeadRow & {
     createdAt: string;
     user: { name: string } | null;
   }>;
-  education?: import("@/modules/education/types").EducationDetailsView | null;
-  campusVisits?: import("@/modules/education/types").CampusVisitView[];
-  realEstate?: import("@/modules/real-estate/types").RealEstateDetailsView | null;
-  siteVisits?: import("@/modules/real-estate/types").SiteVisitView[];
 };
 
 export type LeadOptions = {
@@ -85,4 +82,5 @@ export type LeadOptions = {
   assignees: Array<{ id: string; name: string; email: string; role: { key: string; name: string } }>;
   temperatures: LeadRow["temperature"][];
   dispositions?: Array<{ id: string; key: string; name: string }>;
+  nurtureTemplates?: Array<{ id: string; name: string; channel: string; journey: string; dayOffset: number }>;
 };

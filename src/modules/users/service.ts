@@ -3,24 +3,34 @@ import { hashPassword } from "better-auth/crypto";
 import { prisma } from "@/lib/db";
 import { writeAudit } from "@/lib/audit";
 import { HttpError } from "@/lib/session";
+import { optionalEmail, optionalId, optionalPassword, requiredId } from "@/lib/ids";
 
 export const createUserSchema = z.object({
   name: z.string().trim().min(2).max(120),
   email: z.string().trim().email().toLowerCase(),
   password: z.string().min(8).max(72),
-  roleId: z.string().uuid(),
+  roleId: requiredId("a role"),
   mobile: z.string().trim().max(20).optional().or(z.literal("")),
-  clientId: z.string().uuid().optional().nullable(),
+  alertEmail: optionalEmail,
+  alertPhone: z.string().trim().max(20).optional().or(z.literal("")),
+  notifyEmail: z.boolean().optional(),
+  notifySms: z.boolean().optional(),
+  clientId: optionalId,
   isActive: z.boolean().optional(),
+  approvalStatus: z.enum(["PENDING", "APPROVED", "REJECTED"]).optional(),
 });
 
 export const updateUserSchema = z.object({
   name: z.string().trim().min(2).max(120).optional(),
   mobile: z.string().trim().max(20).optional().or(z.literal("")),
-  roleId: z.string().uuid().optional(),
-  clientId: z.string().uuid().nullable().optional(),
+  alertEmail: optionalEmail,
+  alertPhone: z.string().trim().max(20).optional().or(z.literal("")),
+  notifyEmail: z.boolean().optional(),
+  notifySms: z.boolean().optional(),
+  roleId: optionalId,
+  clientId: optionalId,
   isActive: z.boolean().optional(),
-  password: z.string().min(8).max(72).optional(),
+  password: optionalPassword,
 });
 
 function publicUser<T extends object>(user: T) {
@@ -60,8 +70,12 @@ export async function createUser(actorId: string, input: z.infer<typeof createUs
       emailVerified: true,
       roleId: data.roleId,
       mobile: data.mobile || null,
+      alertEmail: data.alertEmail || null,
+      alertPhone: data.alertPhone || null,
+      notifyEmail: data.notifyEmail ?? true,
+      notifySms: data.notifySms ?? false,
       clientId: data.clientId || null,
-      isActive: data.isActive ?? true,
+      isActive: data.isActive ?? data.approvalStatus !== "PENDING",
       accounts: {
         create: {
           id: crypto.randomUUID(),
@@ -76,6 +90,11 @@ export async function createUser(actorId: string, input: z.infer<typeof createUs
     },
     include: { role: true, client: { select: { id: true, name: true } } },
   });
+
+  const approval = data.approvalStatus ?? (data.isActive === false ? "PENDING" : "APPROVED");
+  if (approval !== "APPROVED") {
+    await prisma.$executeRaw`UPDATE "user" SET approval_status = ${approval} WHERE id = ${userId}`;
+  }
 
   await writeAudit({
     userId: actorId,
@@ -108,6 +127,10 @@ export async function updateUser(
       data: {
         name: data.name,
         mobile: data.mobile === undefined ? undefined : data.mobile || null,
+        alertEmail: data.alertEmail === undefined ? undefined : data.alertEmail || null,
+        alertPhone: data.alertPhone === undefined ? undefined : data.alertPhone || null,
+        notifyEmail: data.notifyEmail,
+        notifySms: data.notifySms,
         roleId: data.roleId,
         clientId: data.clientId === undefined ? undefined : data.clientId,
         isActive: data.isActive,

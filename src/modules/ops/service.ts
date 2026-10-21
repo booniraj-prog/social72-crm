@@ -2,6 +2,7 @@ import { prisma } from "@/lib/db";
 import type { AuthUser } from "@/lib/rbac";
 import { leadScopeWhere } from "@/lib/scope";
 import { istRange } from "@/lib/time";
+import { alertChannelsForUser } from "@/lib/notify";
 
 export async function notify(input: {
   userId: string;
@@ -9,6 +10,8 @@ export async function notify(input: {
   title: string;
   body?: string;
   leadId?: string;
+  entityType?: string;
+  entityId?: string;
 }) {
   const existing = await prisma.notification.findFirst({
     where: {
@@ -20,7 +23,17 @@ export async function notify(input: {
     },
   });
   if (existing) return existing;
-  return prisma.notification.create({ data: input });
+  const channels = await alertChannelsForUser(input.userId).catch(() => ({
+    emailTo: null,
+    phoneTo: null,
+    emailQueued: false,
+    smsQueued: false,
+  }));
+  try {
+    return await prisma.notification.create({ data: { ...input, ...channels } });
+  } catch {
+    return prisma.notification.create({ data: input });
+  }
 }
 
 export async function applyScore(leadId: string, eventKey: string, userId?: string) {
@@ -183,6 +196,9 @@ export async function runOpsTick(actor: AuthUser) {
       });
     }
   }
+
+  const { runPlatformTick } = await import("@/modules/platform/service");
+  await runPlatformTick();
 
   return {
     assignBreaches: unassigned.length,

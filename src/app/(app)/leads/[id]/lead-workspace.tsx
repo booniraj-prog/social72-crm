@@ -1,12 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import type { LeadDetail, LeadOptions } from "@/modules/leads/types";
+import { IssueBadge, QualityMarks, ScoreMark } from "@/components/leads/quality-marks";
+import { ActiveToggle } from "@/components/platform/active-toggle";
 import { fromIstDatetimeLocal, toIstDatetimeLocal } from "@/lib/time";
-import { EducationPanel } from "@/components/education/education-panel";
-import { RealEstatePanel } from "@/components/real-estate/real-estate-panel";
+import { ServicePanel } from "@/components/services/service-panel";
 
 const fieldClass = "h-10 w-full rounded-md border border-line bg-white px-3 text-sm";
 
@@ -27,23 +28,14 @@ export function LeadWorkspace({
   options,
   canAssign,
   canPick,
-  inventory,
+  canWrite,
 }: {
   lead: LeadDetail;
   options: LeadOptions;
   canAssign: boolean;
   canPick: boolean;
+  canWrite?: boolean;
   currentUserId: string;
-  inventory?: {
-    projects: Array<{ id: string; name: string; clientId: string; location: string | null }>;
-    properties: Array<{
-      id: string;
-      name: string;
-      projectId: string | null;
-      clientId: string;
-      configuration: string | null;
-    }>;
-  };
 }) {
   const router = useRouter();
   const [error, setError] = useState("");
@@ -90,12 +82,18 @@ export function LeadWorkspace({
         <div>
           <p className="text-xs uppercase tracking-[0.18em] text-ink-soft">{lead.leadNumber}</p>
           <h1 className="mt-1 font-display text-4xl text-ink">{lead.fullName}</h1>
+          <div className="mt-1">
+            <IssueBadge statusKey={lead.status.key} />
+          </div>
           <p className="mt-1 text-sm text-ink-soft">
             {lead.client.name} · {lead.campaign.name}
             {lead.assignedUser ? ` · ${lead.assignedUser.name}` : " · Unassigned"}
           </p>
         </div>
         <div className="flex gap-2">
+          {canWrite ? (
+            <ActiveToggle entity="lead" id={lead.id} active={lead.isActive !== false} name={lead.fullName} />
+          ) : null}
           {canPick && !lead.assignedUser ? (
             <button
               type="button"
@@ -134,8 +132,10 @@ export function LeadWorkspace({
           <Panel title="CRM">
             <Fact label="Status" value={lead.status.name} />
             <Fact label="Temperature" value={lead.temperature} />
-            <Fact label="Score" value={String(lead.leadScore)} />
+            <Fact label="Score" value={<ScoreMark value={lead.leadScore} />} />
             <Fact label="Owner" value={lead.assignedUser?.name ?? "Unassigned"} />
+            <Fact label="Priority" value={(lead as { priority?: string }).priority ?? "MEDIUM"} />
+            <Fact label="Channel" value={(lead as { captureChannel?: string | null }).captureChannel ?? "—"} />
             <Fact label="Next action" value={lead.nextAction ?? "—"} />
             <Fact label="Next follow-up" value={formatWhen(lead.nextFollowupAt)} />
             <Fact label="Last activity" value={formatWhen(lead.lastActivityAt)} />
@@ -148,14 +148,10 @@ export function LeadWorkspace({
         </section>
 
         <section className="space-y-4">
-          {lead.industry?.key === "education" ? (
-            <EducationPanel lead={lead} statuses={options.statuses} />
-          ) : null}
-          {lead.industry?.key === "real_estate" ? (
-            <RealEstatePanel
-              lead={lead}
-              statuses={options.statuses}
-              inventory={inventory ?? { projects: [], properties: [] }}
+          {lead.industry?.key === "services" ? (
+            <ServicePanel
+              leadId={lead.id}
+              details={(lead as { serviceDetails?: { serviceLine: string | null; requirement: string | null; proposalValue: number | null; milestone: string | null } | null }).serviceDetails}
             />
           ) : null}
           <div className="rounded-lg border border-line bg-white p-5">
@@ -237,15 +233,12 @@ export function LeadWorkspace({
                   className={`${fieldClass} mt-1`}
                   defaultValue={lead.assignedUser?.id ?? ""}
                   disabled={!!busy}
-                  onChange={(e) =>
-                    post(
-                      `/api/leads/${lead.id}/assign`,
-                      { assignedUserId: e.target.value || null },
-                      "assign",
-                    )
-                  }
+                  onChange={(e) => {
+                    if (!e.target.value) return;
+                    post(`/api/leads/${lead.id}/assign`, { assignedUserId: e.target.value }, "assign");
+                  }}
                 >
-                  <option value="">Unassigned</option>
+                  {!lead.assignedUser ? <option value="">Select employee</option> : null}
                   {options.assignees.map((u) => (
                     <option key={u.id} value={u.id}>
                       {u.name}
@@ -279,6 +272,14 @@ export function LeadWorkspace({
                   Nurture
                 </MiniAction>
               ) : null}
+            </div>
+            <div className="pt-2">
+              <QualityMarks
+                statuses={options.statuses}
+                currentKey={lead.status.key}
+                disabled={!!busy}
+                onPick={(statusId) => post(`/api/leads/${lead.id}/status`, { statusId }, "status")}
+              />
             </div>
           </Panel>
 
@@ -335,6 +336,35 @@ export function LeadWorkspace({
             </button>
           </Panel>
 
+          {(options.nurtureTemplates?.length ?? 0) > 0 ? (
+            <Panel title="Nurture message">
+              <p className="mb-2 text-xs text-ink-soft">Logs onto this lead timeline. WhatsApp API can be wired later.</p>
+              <select
+                id="nurture-template"
+                className={fieldClass}
+                defaultValue={options.nurtureTemplates![0].id}
+              >
+                {options.nurtureTemplates!.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    Day {t.dayOffset} · {t.journey} · {t.name}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                disabled={!!busy}
+                onClick={() => {
+                  const el = document.getElementById("nurture-template") as HTMLSelectElement | null;
+                  if (!el?.value) return;
+                  post("/api/platform?kind=nurture-send", { leadId: lead.id, templateId: el.value }, "nurture");
+                }}
+                className="mt-2 h-9 rounded-md border border-line px-3 text-sm"
+              >
+                Log message
+              </button>
+            </Panel>
+          ) : null}
+
           <Panel title="Close">
             <input
               value={reason}
@@ -355,6 +385,14 @@ export function LeadWorkspace({
                   Mark won
                 </button>
               ) : null}
+              <button
+                type="button"
+                disabled={!!busy}
+                onClick={() => post("/api/platform?kind=convert-project", { leadId: lead.id }, "project")}
+                className="h-9 rounded-md border border-line px-3 text-sm"
+              >
+                Start project
+              </button>
               {lost ? (
                 <button
                   type="button"
@@ -384,7 +422,7 @@ function Panel({ title, children }: { title: string; children: React.ReactNode }
   );
 }
 
-function Fact({ label, value }: { label: string; value: string }) {
+function Fact({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div className="flex justify-between gap-3 text-sm">
       <span className="text-ink-soft">{label}</span>

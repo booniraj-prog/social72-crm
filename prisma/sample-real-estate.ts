@@ -216,7 +216,7 @@ export async function seedRealEstate(prisma: PrismaClient) {
   const now = new Date();
   let created = 0;
 
-  for (let i = 0; i < 20; i++) {
+  for (let i = 0; i < 2; i++) {
     const [firstName, lastName] = PEOPLE[i];
     const statusKey = RE_CYCLE[i % RE_CYCLE.length];
     const status = statuses[statusKey];

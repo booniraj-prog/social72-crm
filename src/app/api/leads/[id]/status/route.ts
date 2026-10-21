@@ -2,9 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { jsonError, requirePermission } from "@/lib/session";
 import { changeStatus } from "@/modules/leads/service";
 import { z } from "zod";
+import { requiredId } from "@/lib/ids";
 
 const schema = z.object({
-  statusId: z.string().uuid(),
+  statusId: requiredId("a status"),
   reason: z.string().trim().max(400).optional(),
 });
 

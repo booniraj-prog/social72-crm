@@ -1,8 +1,9 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import Link from "next/link";
+import { IssueBadge, QualityMarks, ScoreMark } from "@/components/leads/quality-marks";
 import { defaultIstCallbackLocal, formatIst, fromIstDatetimeLocal, toIstDatetimeLocal } from "@/lib/time";
 import type { LeadDetail, LeadOptions, LeadRow } from "@/modules/leads/types";
 
@@ -14,13 +15,20 @@ export function CallingDesk({
   options,
   canPick,
   currentUserId,
+  clientId,
 }: {
   queue: LeadRow[];
   lead: LeadDetail | null;
   options: LeadOptions;
   canPick: boolean;
   currentUserId: string;
+  clientId?: string;
 }) {
+  const queueHref = (leadId: string) => {
+    const q = new URLSearchParams({ leadId });
+    if (clientId) q.set("clientId", clientId);
+    return `/calling?${q.toString()}`;
+  };
   const router = useRouter();
   const [error, setError] = useState("");
   const [busy, setBusy] = useState("");
@@ -74,8 +82,8 @@ export function CallingDesk({
     <div className="flex min-h-[calc(100vh-4rem)] flex-col">
       <div className="flex items-end justify-between gap-3">
         <div>
-          <p className="text-xs uppercase tracking-[0.18em] text-ink-soft">BPO floor</p>
-          <h1 className="mt-1 font-display text-4xl text-ink">Calling</h1>
+          <p className="text-xs uppercase tracking-[0.18em] text-ink-soft">Demand</p>
+          <h1 className="mt-1 font-display text-4xl text-ink">Outbound calling</h1>
         </div>
         {lead ? (
           <Link href={`/leads/${lead.id}`} className="text-sm text-copper hover:underline">
@@ -99,7 +107,7 @@ export function CallingDesk({
                 return (
                   <li key={item.id}>
                     <Link
-                      href={`/calling?leadId=${item.id}`}
+                      href={queueHref(item.id)}
                       prefetch={false}
                       scroll={false}
                       className={`block w-full border-b border-line px-3 py-2.5 text-left text-sm ${
@@ -107,6 +115,12 @@ export function CallingDesk({
                       }`}
                     >
                       <span className="block font-medium text-ink">{item.fullName}</span>
+                      <span className="mt-0.5 inline-flex items-center gap-1.5">
+                        <IssueBadge statusKey={item.status.key} />
+                        <span className="text-[10px] uppercase tracking-[0.08em] text-ink-soft">
+                          Score <ScoreMark value={item.leadScore} />
+                        </span>
+                      </span>
                       <span className="block text-xs text-ink-soft">
                         {item.status.name}
                         {item.assignedUser
@@ -136,6 +150,12 @@ export function CallingDesk({
                   <div>
                     <p className="text-xs uppercase tracking-[0.16em] text-ink-soft">{lead.leadNumber}</p>
                     <h2 className="font-display text-3xl text-ink">{lead.fullName}</h2>
+                    <div className="mt-1 flex flex-wrap items-center gap-2">
+                      <IssueBadge statusKey={lead.status.key} />
+                      <span className="text-xs text-ink-soft">
+                        Score <ScoreMark value={lead.leadScore} />
+                      </span>
+                    </div>
                     <p className="mt-1 text-sm text-ink-soft">
                       {lead.client.name} · {lead.campaign.name}
                       {lead.assignedUser ? ` · ${lead.assignedUser.name}` : " · Unassigned"}
@@ -165,67 +185,11 @@ export function CallingDesk({
                   <Fact label="Generated" value={formatIst(lead.generatedAt ?? lead.createdAt)} />
                   <Fact label="Status" value={lead.status.name} />
                   <Fact label="Temperature" value={lead.temperature} />
-                  <Fact label="Score" value={String(lead.leadScore)} />
+                  <Fact label="Score" value={<ScoreMark value={lead.leadScore} />} />
                   <Fact label="Expected ₹" value={Number(lead.expectedValue).toLocaleString("en-IN")} />
                   <Fact label="Next follow-up" value={formatIst(lead.nextFollowupAt)} />
                   <Fact label="Next action" value={lead.nextAction ?? "—"} />
                 </dl>
-                {lead.industry?.key === "real_estate" ? (
-                  <div className="mt-4 rounded-md border border-line bg-paper-2 px-3 py-3 text-sm">
-                    <p className="text-[10px] uppercase tracking-[0.16em] text-ink-soft">Property</p>
-                    <dl className="mt-2 grid gap-2 sm:grid-cols-2">
-                      <Fact
-                        label="Unit"
-                        value={lead.realEstate?.property?.name ?? lead.realEstate?.project?.name ?? "—"}
-                      />
-                      <Fact label="Config" value={lead.realEstate?.configuration ?? "—"} />
-                      <Fact label="Location" value={lead.realEstate?.preferredLocation ?? lead.realEstate?.location ?? "—"} />
-                      <Fact label="Registration" value={lead.realEstate?.registrationStatus ?? "—"} />
-                      <Fact
-                        label="Visit"
-                        value={
-                          lead.siteVisits?.[0]
-                            ? `${lead.siteVisits[0].completedAt ? "Done" : "Set"} · ${formatIst(lead.siteVisits[0].scheduledAt)}`
-                            : "—"
-                        }
-                      />
-                      <Fact
-                        label="Value"
-                        value={
-                          lead.realEstate?.propertyValue != null
-                            ? `₹${Number(lead.realEstate.propertyValue).toLocaleString("en-IN")}`
-                            : "—"
-                        }
-                      />
-                    </dl>
-                    <Link href={`/leads/${lead.id}`} className="mt-2 inline-block text-xs text-copper hover:underline">
-                      Open property fields
-                    </Link>
-                  </div>
-                ) : null}
-                {lead.industry?.key === "education" ? (
-                  <div className="mt-4 rounded-md border border-line bg-paper-2 px-3 py-3 text-sm">
-                    <p className="text-[10px] uppercase tracking-[0.16em] text-ink-soft">Admissions</p>
-                    <dl className="mt-2 grid gap-2 sm:grid-cols-2">
-                      <Fact label="Student" value={lead.education?.studentName ?? lead.fullName} />
-                      <Fact label="Parent" value={lead.education?.parentName ?? "—"} />
-                      <Fact label="Target class" value={lead.education?.targetClass ?? "—"} />
-                      <Fact label="Campus" value={lead.education?.preferredCampus ?? "—"} />
-                      <Fact label="Admission" value={lead.education?.admissionStatus ?? "—"} />
-                      <Fact
-                        label="Visit"
-                        value={
-                          lead.campusVisits?.[0]
-                            ? `${lead.campusVisits[0].completedAt ? "Done" : "Set"} · ${formatIst(lead.campusVisits[0].scheduledAt)}`
-                            : "—"
-                        }
-                      />
-                    </dl>
-                    <Link href={`/leads/${lead.id}`} className="mt-2 inline-block text-xs text-copper hover:underline">
-                      Open admissions fields
-                    </Link>
-                  </div>
-                ) : null}
                 <div className="mt-4 rounded-md bg-paper-2 px-3 py-3 text-sm">
                   <p className="text-[10px] uppercase tracking-[0.16em] text-ink-soft">Last conversation</p>
                   <p className="mt-1 text-ink">
@@ -410,6 +374,12 @@ export function CallingDesk({
                   </Mini>
                 ) : null}
               </div>
+              <QualityMarks
+                statuses={options.statuses}
+                currentKey={lead.status.key}
+                disabled={!!busy}
+                onPick={(statusId) => post(`/api/leads/${lead.id}/status`, { statusId }, "status")}
+              />
             </Panel>
 
             <Panel title="Qualification">
@@ -501,7 +471,7 @@ export function CallingDesk({
   );
 }
 
-function Fact({ label, value }: { label: string; value: string }) {
+function Fact({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div>
       <dt className="text-xs text-ink-soft">{label}</dt>
@@ -510,7 +480,7 @@ function Fact({ label, value }: { label: string; value: string }) {
   );
 }
 
-function Panel({ title, children }: { title: string; children: React.ReactNode }) {
+function Panel({ title, children }: { title: string; children: ReactNode }) {
   return (
     <div className="rounded-lg border border-line bg-white p-4">
       <h3 className="text-xs uppercase tracking-[0.16em] text-ink-soft">{title}</h3>

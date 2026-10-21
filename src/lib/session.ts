@@ -4,6 +4,7 @@ import { ZodError } from "zod";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { hasPermission, type AuthUser, type RoleKey } from "@/lib/rbac";
+import { friendlyZodMessage, zodFieldMap } from "@/lib/ids";
 
 export class HttpError extends Error {
   constructor(
@@ -71,11 +72,14 @@ export function jsonError(error: unknown) {
     );
   }
   if (error instanceof ZodError) {
+    const fields = zodFieldMap(error.issues);
+    const first = error.issues[0];
     return NextResponse.json(
       {
         error: {
           code: "VALIDATION",
-          message: error.issues[0]?.message ?? "Invalid input",
+          message: first ? friendlyZodMessage(first) : "Please check the form",
+          fields,
         },
       },
       { status: 400 },

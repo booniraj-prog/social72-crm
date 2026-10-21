@@ -8,6 +8,13 @@ export function formatInr(value: number) {
   return `${sign}${rest},${last3}`;
 }
 
+export function formatInr2(value: number) {
+  return Number(value || 0).toLocaleString("en-IN", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
 export function safeDiv(numerator: number, denominator: number) {
   if (!denominator) return 0;
   return numerator / denominator;

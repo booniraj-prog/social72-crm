@@ -5,6 +5,7 @@ import { leadScopeWhere } from "@/lib/scope";
 import { HttpError } from "@/lib/session";
 import { istRange, startOfIstDay } from "@/lib/time";
 import { earliestOpenFollowup } from "@/modules/followups/sync";
+import { excludePausedLeads, pausedLeadIds } from "@/lib/lead-active";
 import { requireLeadAccess, serializeLead } from "@/modules/leads/service";
 
 export const FOLLOWUP_BUCKETS = [
@@ -18,12 +19,21 @@ export const FOLLOWUP_BUCKETS = [
 
 export type FollowupBucket = (typeof FOLLOWUP_BUCKETS)[number];
 
-function notFinal() {
-  return { status: { isFinal: false }, deletedAt: null };
+function notFinal(pausedIds: string[]) {
+  return {
+    status: { isFinal: false },
+    deletedAt: null,
+    duplicateOfId: null,
+    client: { isActive: true },
+    campaign: { isActive: true },
+    ...excludePausedLeads(pausedIds),
+  };
 }
 
-export async function countFollowupBuckets(actor: AuthUser) {
+export async function countFollowupBuckets(actor: AuthUser, clientId?: string) {
   const scope = await leadScopeWhere(actor);
+  const clientFilter = clientId ? { clientId } : {};
+  const paused = await pausedLeadIds();
   const today = istRange("today");
   const overdue = istRange("overdue");
   const tomorrow = istRange("tomorrow");
@@ -34,27 +44,27 @@ export async function countFollowupBuckets(actor: AuthUser) {
   const [todayCount, overdueCount, tomorrowCount, upcomingCount, noneCount, missedCount] =
     await Promise.all([
       prisma.lead.count({
-        where: { AND: [scope, notFinal(), { nextFollowupAt: { gte: today.gte, lt: today.lt } }] },
+        where: { AND: [scope, clientFilter, notFinal(paused), { nextFollowupAt: { gte: today.gte, lt: today.lt } }] },
       }),
       prisma.lead.count({
-        where: { AND: [scope, notFinal(), { nextFollowupAt: { lt: overdue.lt } }] },
+        where: { AND: [scope, clientFilter, notFinal(paused), { nextFollowupAt: { lt: overdue.lt } }] },
       }),
       prisma.lead.count({
         where: {
-          AND: [scope, notFinal(), { nextFollowupAt: { gte: tomorrow.gte, lt: tomorrow.lt } }],
+          AND: [scope, clientFilter, notFinal(paused), { nextFollowupAt: { gte: tomorrow.gte, lt: tomorrow.lt } }],
         },
       }),
       prisma.lead.count({
-        where: { AND: [scope, notFinal(), { nextFollowupAt: { gte: upcoming.gte } }] },
+        where: { AND: [scope, clientFilter, notFinal(paused), { nextFollowupAt: { gte: upcoming.gte } }] },
       }),
       prisma.lead.count({
-        where: { AND: [scope, notFinal(), { nextFollowupAt: null }] },
+        where: { AND: [scope, clientFilter, notFinal(paused), { nextFollowupAt: null }] },
       }),
       prisma.followUp.count({
         where: {
           completedAt: null,
           dueAt: { lt: todayStart },
-          lead: { AND: [scope, notFinal()] },
+          lead: { AND: [scope, clientFilter, notFinal(paused)] },
         },
       }),
     ]);
@@ -62,7 +72,7 @@ export async function countFollowupBuckets(actor: AuthUser) {
   const completedToday = await prisma.followUp.count({
     where: {
       completedAt: { gte: todayStart, lt: now },
-      lead: { AND: [scope] },
+      lead: { AND: [scope, clientFilter] },
     },
   });
   const dueTodayTotal = todayCount + completedToday;
@@ -80,8 +90,10 @@ export async function countFollowupBuckets(actor: AuthUser) {
   };
 }
 
-export async function listFollowupBucket(actor: AuthUser, bucket: FollowupBucket) {
+export async function listFollowupBucket(actor: AuthUser, bucket: FollowupBucket, clientId?: string) {
   const scope = await leadScopeWhere(actor);
+  const clientFilter = clientId ? { clientId } : {};
+  const paused = await pausedLeadIds();
   const include = {
     client: { select: { id: true, name: true } },
     campaign: { select: { id: true, name: true } },
@@ -95,7 +107,7 @@ export async function listFollowupBucket(actor: AuthUser, bucket: FollowupBucket
       where: {
         completedAt: null,
         dueAt: { lt: startOfIstDay() },
-        lead: { AND: [scope, notFinal()] },
+        lead: { AND: [scope, clientFilter, notFinal(paused)] },
       },
       include: { lead: { include } },
       orderBy: { dueAt: "asc" },
@@ -122,12 +134,12 @@ export async function listFollowupBucket(actor: AuthUser, bucket: FollowupBucket
 
   const where =
     bucket === "none"
-      ? { AND: [scope, notFinal(), { nextFollowupAt: null }] }
+      ? { AND: [scope, clientFilter, notFinal(paused), { nextFollowupAt: null }] }
       : range && "gte" in range && "lt" in range
-        ? { AND: [scope, notFinal(), { nextFollowupAt: { gte: range.gte, lt: range.lt } }] }
+        ? { AND: [scope, clientFilter, notFinal(paused), { nextFollowupAt: { gte: range.gte, lt: range.lt } }] }
         : range && "lt" in range && !("gte" in range)
-          ? { AND: [scope, notFinal(), { nextFollowupAt: { lt: range.lt } }] }
-          : { AND: [scope, notFinal(), { nextFollowupAt: { gte: range!.gte } }] };
+          ? { AND: [scope, clientFilter, notFinal(paused), { nextFollowupAt: { lt: range.lt } }] }
+          : { AND: [scope, clientFilter, notFinal(paused), { nextFollowupAt: { gte: range!.gte } }] };
 
   const leads = await prisma.lead.findMany({
     where,

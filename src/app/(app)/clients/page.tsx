@@ -8,7 +8,7 @@ export default async function ClientsPage() {
   const actor = await getAuthUser();
   if (!actor || !hasPermission(actor, "client.read")) redirect("/dashboard");
 
-  const [clients, industries] = await Promise.all([listClients(), listIndustries()]);
+  const [clients, industries] = await Promise.all([listClients(undefined, { includeInactive: true }), listIndustries()]);
 
   return (
     <ClientsManager

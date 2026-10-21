@@ -2,8 +2,11 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import type { AuthUser } from "@/lib/rbac";
 
-export async function leadScopeWhere(user: AuthUser): Promise<Prisma.LeadWhereInput> {
-  const base: Prisma.LeadWhereInput = { deletedAt: null };
+export async function leadScopeWhere(
+  user: AuthUser,
+  opts?: { includeDeleted?: boolean },
+): Promise<Prisma.LeadWhereInput> {
+  const base: Prisma.LeadWhereInput = opts?.includeDeleted ? {} : { deletedAt: null };
 
   if (user.roleKey === "super_admin" || user.roleKey === "crm_manager") {
     return base;

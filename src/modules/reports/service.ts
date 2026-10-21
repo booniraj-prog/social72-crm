@@ -12,20 +12,16 @@ import {
   spendForWhere,
 } from "@/modules/insights/service";
 import { prisma } from "@/lib/db";
+import { paymentStatus, vsBench } from "@/lib/commercial";
 
 export const REPORT_TYPES = [
-  { key: "leads", label: "Lead" },
-  { key: "campaigns", label: "Campaign" },
-  { key: "bpo", label: "BPO performance" },
-  { key: "followups", label: "Follow-up" },
-  { key: "conversion", label: "Conversion" },
-  { key: "revenue", label: "Revenue" },
-  { key: "roi", label: "ROI" },
-  { key: "source", label: "Source performance" },
-  { key: "executive", label: "Executive" },
-  { key: "client", label: "Client" },
-  { key: "education", label: "Education admission" },
-  { key: "real_estate", label: "Real estate registration" },
+  { key: "leads", label: "Leads" },
+  { key: "followups", label: "Follow-ups" },
+  { key: "campaigns", label: "Campaigns" },
+  { key: "source", label: "Sources" },
+  { key: "bpo", label: "Calling floor" },
+  { key: "client", label: "Clients" },
+  { key: "collections", label: "Collections" },
 ] as const;
 
 export type ReportKey = (typeof REPORT_TYPES)[number]["key"];
@@ -61,11 +57,11 @@ export async function buildReport(actor: AuthUser, type: ReportKey, filters: Ins
     }));
   }
 
-  if (type === "campaigns" || type === "roi") {
+  if (type === "campaigns") {
     return campaignBreakdown(actor, filters);
   }
 
-  if (type === "bpo" || type === "executive") {
+  if (type === "bpo") {
     return listCallerPerformance(actor);
   }
 
@@ -87,38 +83,6 @@ export async function buildReport(actor: AuthUser, type: ReportKey, filters: Ins
       nextFollowup: lead.nextFollowupAt?.toISOString() ?? "",
       nextAction: lead.nextAction ?? "",
       overdue: lead.nextFollowupAt && lead.nextFollowupAt < new Date() ? "yes" : "no",
-    }));
-  }
-
-  if (type === "conversion") {
-    const kpis = await insightKpis(actor, filters);
-    return [
-      {
-        leads: kpis.leads,
-        contacted: kpis.contacted,
-        connected: kpis.connected,
-        qualified: kpis.qualified,
-        visits: kpis.visits,
-        won: kpis.won,
-        lost: kpis.lost,
-        conversionRate: kpis.conversionRate,
-      },
-    ];
-  }
-
-  if (type === "revenue") {
-    const won = await prisma.lead.findMany({
-      where: { AND: [where, { status: { key: { in: ["CLOSED_WON", "ADMISSION_CONFIRMED", "REGISTRATION"] } } }] },
-      take: 2000,
-      include: { client: { select: { name: true } }, campaign: { select: { name: true } } },
-    });
-    return won.map((lead) => ({
-      leadNumber: lead.leadNumber,
-      name: lead.fullName,
-      client: lead.client.name,
-      campaign: lead.campaign.name,
-      actualRevenue: Number(lead.actualRevenue ?? 0),
-      closedAt: lead.closureDate?.toISOString() ?? "",
     }));
   }
 
@@ -154,46 +118,45 @@ export async function buildReport(actor: AuthUser, type: ReportKey, filters: Ins
     );
   }
 
-  if (type === "education") {
-    const leads = await prisma.lead.findMany({
-      where: { AND: [where, { industry: { key: "education" } }] },
-      take: 2000,
-      include: {
-        education: true,
-        client: { select: { name: true } },
-        status: { select: { name: true } },
-      },
+  if (type === "collections") {
+    const invoices = await prisma.invoice.findMany({
+      where: { kind: { not: "QUOTE" }, status: { not: "VOID" } },
+      take: 500,
+      orderBy: { createdAt: "desc" },
+      include: { client: { select: { name: true } }, engagement: { select: { name: true, budget: true } } },
     });
-    return leads.map((lead) => ({
-      leadNumber: lead.leadNumber,
-      student: lead.education?.studentName ?? lead.fullName,
-      parent: lead.education?.parentName ?? "",
-      campus: lead.education?.preferredCampus ?? "",
-      status: lead.status.name,
-      admission: lead.education?.admissionStatus ?? "",
-      client: lead.client.name,
-      fee: Number(lead.education?.fee ?? 0),
-    }));
+    const extras = await prisma
+      .$queryRaw<
+        Array<{ id: string; follow_up_at: Date | null; benchmark_amount: unknown; po_value: unknown }>
+      >`
+        SELECT i.id, i.follow_up_at, i.benchmark_amount, e.po_value
+        FROM invoices i
+        LEFT JOIN engagements e ON e.id = i.engagement_id
+      `
+      .catch(() => [] as Array<{ id: string; follow_up_at: Date | null; benchmark_amount: unknown; po_value: unknown }>);
+    const extraById = Object.fromEntries(extras.map((row) => [row.id, row]));
+    return invoices.map((i) => {
+      const total = Number(i.total ?? 0);
+      const paid = Number(i.paid ?? 0);
+      const extra = extraById[i.id];
+      const bench = Number(extra?.benchmark_amount ?? 0) || Number(extra?.po_value ?? 0) || Number(i.engagement?.budget ?? 0);
+      return {
+        invoice: i.number,
+        client: i.client.name,
+        project: i.engagement?.name ?? "—",
+        payment: paymentStatus({ total, paid, dueDate: i.dueDate, status: i.status }),
+        billed: total,
+        collected: paid,
+        outstanding: total - paid,
+        bench,
+        vsBench: vsBench(total, bench),
+        followUp: extra?.follow_up_at ? new Date(extra.follow_up_at).toISOString().slice(0, 10) : "",
+        due: i.dueDate?.toISOString().slice(0, 10) ?? "",
+      };
+    });
   }
 
-  const leads = await prisma.lead.findMany({
-    where: { AND: [where, { industry: { key: "real_estate" } }] },
-    take: 2000,
-    include: {
-      realEstate: true,
-      client: { select: { name: true } },
-      status: { select: { name: true } },
-    },
-  });
-  return leads.map((lead) => ({
-    leadNumber: lead.leadNumber,
-    name: lead.fullName,
-    project: lead.realEstate?.preferredLocation ?? "",
-    status: lead.status.name,
-    bookingAmount: Number(lead.realEstate?.bookingAmount ?? 0),
-    propertyValue: Number(lead.realEstate?.propertyValue ?? 0),
-    client: lead.client.name,
-  }));
+  return [];
 }
 
 export async function reportCsv(actor: AuthUser, type: ReportKey, filters: InsightFilters) {

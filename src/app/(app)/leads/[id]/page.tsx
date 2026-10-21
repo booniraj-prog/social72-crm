@@ -4,7 +4,7 @@ import { canAssignLeads, canPickLeads } from "@/lib/scope";
 import { getAuthUser } from "@/lib/session";
 import { HttpError } from "@/lib/session";
 import { getLead, listAssignees, listLeadSources, listLeadStatuses } from "@/modules/leads/service";
-import { listRealEstateInventory } from "@/modules/real-estate/service";
+import { listNurtureTemplates } from "@/modules/today/service";
 import { LeadWorkspace } from "./lead-workspace";
 import type { LeadDetail } from "@/modules/leads/types";
 
@@ -14,30 +14,34 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
   const { id } = await params;
 
   try {
-    const [lead, statuses, sources, assignees] = await Promise.all([
+    const [lead, statuses, sources, assignees, nurtureTemplates] = await Promise.all([
       getLead(actor, id),
       listLeadStatuses(),
       listLeadSources(),
       listAssignees(),
+      listNurtureTemplates(),
     ]);
     const typed = lead as unknown as LeadDetail;
-    const inventory =
-      typed.industry?.key === "real_estate"
-        ? await listRealEstateInventory(typed.client.id)
-        : { projects: [], properties: [] };
 
     return (
       <LeadWorkspace
         lead={typed}
         canAssign={canAssignLeads(actor)}
         canPick={canPickLeads(actor)}
+        canWrite={hasPermission(actor, "lead.write")}
         currentUserId={actor.id}
-        inventory={inventory}
         options={{
           statuses,
           sources,
           assignees,
           temperatures: ["HOT", "WARM", "COLD", "UNQUALIFIED"],
+          nurtureTemplates: nurtureTemplates.map((t) => ({
+            id: t.id,
+            name: t.name,
+            channel: t.channel,
+            journey: t.journey,
+            dayOffset: t.dayOffset,
+          })),
         }}
       />
     );

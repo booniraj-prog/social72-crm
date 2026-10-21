@@ -4,7 +4,7 @@ import { getAuthUser } from "@/lib/session";
 import { listClients } from "@/modules/clients/service";
 import { listCampaigns } from "@/modules/campaigns/service";
 import { insightKpis } from "@/modules/insights/service";
-import { REPORT_TYPES, buildReport, reportSummaryLine, type ReportKey } from "@/modules/reports/service";
+import { REPORT_TYPES, buildReport, type ReportKey } from "@/modules/reports/service";
 import { ReportsBoard } from "./reports-board";
 
 export default async function ReportsPage({
@@ -34,7 +34,14 @@ export default async function ReportsPage({
     <ReportsBoard
       type={type}
       types={[...REPORT_TYPES]}
-      summary={reportSummaryLine(kpis)}
+      snapshot={{
+        leads: kpis.leads,
+        won: kpis.won,
+        conversionRate: kpis.conversionRate,
+        revenue: kpis.revenue,
+        spend: kpis.spend,
+        cpl: kpis.cpl,
+      }}
       rows={rows as Array<Record<string, unknown>>}
       canExport={hasPermission(actor, "report.export")}
       filters={{

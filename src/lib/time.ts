@@ -41,6 +41,16 @@ export function formatIst(iso: string | Date | null) {
   });
 }
 
+export function formatIstDate(iso: string | Date | null) {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleDateString("en-IN", {
+    timeZone: IST,
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+}
+
 function istPart(date: Date, type: Intl.DateTimeFormatPartTypes) {
   const parts = new Intl.DateTimeFormat("en-GB", {
     timeZone: IST,
@@ -90,4 +100,25 @@ export function fromIstDateInput(value: string) {
   const date = new Date(`${trimmed}T00:00:00+05:30`);
   if (Number.isNaN(date.getTime())) return undefined;
   return date;
+}
+
+export const DASHBOARD_PERIODS = ["today", "week", "month", "quarter", "year"] as const;
+export type DashboardPeriod = (typeof DASHBOARD_PERIODS)[number];
+
+export function istPeriodRange(period: DashboardPeriod): { from: string; to: string } {
+  const today = startOfIstDay();
+  const to = ymdInIst(today);
+  if (period === "today") return { from: to, to };
+  if (period === "week") return { from: ymdInIst(addIstDays(today, -6)), to };
+  if (period === "month") {
+    const ymd = ymdInIst(today);
+    return { from: `${ymd.slice(0, 8)}01`, to };
+  }
+  if (period === "quarter") {
+    const ymd = ymdInIst(today);
+    const month = Number(ymd.slice(5, 7));
+    const qStart = month <= 3 ? "01" : month <= 6 ? "04" : month <= 9 ? "07" : "10";
+    return { from: `${ymd.slice(0, 5)}${qStart}-01`, to };
+  }
+  return { from: `${ymdInIst(today).slice(0, 4)}-01-01`, to };
 }

@@ -6,6 +6,8 @@ import { useState } from "react";
 import { formatInr } from "@/lib/money";
 import { toIstDateInput } from "@/lib/time";
 import { CAMPAIGN_TYPES, PLATFORMS } from "@/modules/insights/constants";
+import { controlClass, Field, FormBanner, focusInvalid, validateRecord } from "@/components/platform/form-field";
+import { TableFrame } from "@/components/platform/table-controls";
 
 type Detail = {
   campaign: {
@@ -46,9 +48,9 @@ export function CampaignWorkspace({ detail, canWrite }: { detail: Detail; canWri
   const router = useRouter();
   const c = detail.campaign;
   const [error, setError] = useState("");
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [spendErrors, setSpendErrors] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState("");
-  const [csv, setCsv] = useState("");
-  const [importResult, setImportResult] = useState("");
 
   async function post(path: string, body: unknown, method = "POST") {
     setBusy(path);
@@ -78,7 +80,7 @@ export function CampaignWorkspace({ detail, canWrite }: { detail: Detail; canWri
         {c.client.name} · {c.industry.name}
         {c.owner ? ` · ${c.owner.name}` : ""}
       </p>
-      {error ? <p className="mt-3 text-sm text-danger">{error}</p> : null}
+      {error ? <FormBanner message={error} /> : null}
 
       <dl className="mt-6 grid gap-3 sm:grid-cols-3 xl:grid-cols-6">
         <Kpi label="Spend" value={`₹${formatInr(detail.kpis.spend)}`} />
@@ -92,47 +94,73 @@ export function CampaignWorkspace({ detail, canWrite }: { detail: Detail; canWri
       <div className="mt-8 grid gap-6 xl:grid-cols-2">
         {canWrite ? (
           <form
+            noValidate
             className="rounded-lg border border-line bg-white p-5"
             onSubmit={(e) => {
               e.preventDefault();
-              const data = new FormData(e.currentTarget);
+              const form = e.currentTarget;
+              const data = Object.fromEntries(new FormData(form).entries()) as Record<string, string>;
+              const nextErrors = validateRecord(data, [
+                { name: "name", label: "Campaign name", required: true },
+                { name: "budget", label: "Budget", type: "number", min: 0 },
+              ]);
+              if (data.startDate && data.endDate && data.endDate < data.startDate) {
+                nextErrors.endDate = "End date must be on or after start date";
+              }
+              setFieldErrors(nextErrors);
+              if (Object.keys(nextErrors).length > 0) {
+                requestAnimationFrame(() => focusInvalid(form));
+                return;
+              }
               void post(
                 `/api/campaigns/${c.id}`,
                 {
-                  name: data.get("name"),
-                  platform: data.get("platform"),
-                  campaignType: data.get("campaignType"),
-                  startDate: data.get("startDate"),
-                  endDate: data.get("endDate"),
-                  budget: data.get("budget"),
-                  isActive: data.get("isActive") === "on",
+                  name: data.name,
+                  platform: data.platform,
+                  campaignType: data.campaignType,
+                  startDate: data.startDate,
+                  endDate: data.endDate,
+                  budget: data.budget,
+                  isActive: data.isActive === "on",
                 },
                 "PATCH",
               );
             }}
           >
             <h2 className="text-xs uppercase tracking-[0.16em] text-ink-soft">Campaign</h2>
-            <div className="mt-3 grid gap-2">
-              <input name="name" defaultValue={c.name} className="h-10 rounded-md border border-line px-3 text-sm" />
-              <select name="platform" defaultValue={c.platform ?? ""} className="h-10 rounded-md border border-line px-3 text-sm">
-                <option value="">Platform</option>
-                {PLATFORMS.map((p) => (
-                  <option key={p} value={p}>
-                    {p}
-                  </option>
-                ))}
-              </select>
-              <select name="campaignType" defaultValue={c.campaignType ?? ""} className="h-10 rounded-md border border-line px-3 text-sm">
-                <option value="">Type</option>
-                {CAMPAIGN_TYPES.map((p) => (
-                  <option key={p} value={p}>
-                    {p}
-                  </option>
-                ))}
-              </select>
-              <input name="startDate" type="date" defaultValue={toIstDateInput(c.startDate)} className="h-10 rounded-md border border-line px-3 text-sm" />
-              <input name="endDate" type="date" defaultValue={toIstDateInput(c.endDate)} className="h-10 rounded-md border border-line px-3 text-sm" />
-              <input name="budget" defaultValue={c.budget} className="h-10 rounded-md border border-line px-3 text-sm" />
+            <div className="mt-3 grid gap-3">
+              <Field label="Name" required error={fieldErrors.name}>
+                <input name="name" defaultValue={c.name} aria-invalid={Boolean(fieldErrors.name)} className={controlClass(Boolean(fieldErrors.name))} />
+              </Field>
+              <Field label="Platform">
+                <select name="platform" defaultValue={c.platform ?? ""} className={controlClass()}>
+                  <option value="">Platform</option>
+                  {PLATFORMS.map((p) => (
+                    <option key={p} value={p}>
+                      {p}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Type">
+                <select name="campaignType" defaultValue={c.campaignType ?? ""} className={controlClass()}>
+                  <option value="">Type</option>
+                  {CAMPAIGN_TYPES.map((p) => (
+                    <option key={p} value={p}>
+                      {p}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Start date">
+                <input name="startDate" type="date" defaultValue={toIstDateInput(c.startDate)} className={controlClass()} />
+              </Field>
+              <Field label="End date" error={fieldErrors.endDate}>
+                <input name="endDate" type="date" defaultValue={toIstDateInput(c.endDate)} aria-invalid={Boolean(fieldErrors.endDate)} className={controlClass(Boolean(fieldErrors.endDate))} />
+              </Field>
+              <Field label="Budget" error={fieldErrors.budget}>
+                <input name="budget" defaultValue={c.budget} aria-invalid={Boolean(fieldErrors.budget)} className={controlClass(Boolean(fieldErrors.budget))} />
+              </Field>
               <label className="text-sm">
                 <input name="isActive" type="checkbox" defaultChecked={c.isActive} className="mr-2" />
                 Active
@@ -148,23 +176,43 @@ export function CampaignWorkspace({ detail, canWrite }: { detail: Detail; canWri
           <h2 className="text-xs uppercase tracking-[0.16em] text-ink-soft">Marketing spend</h2>
           {canWrite ? (
             <form
+              noValidate
               className="mt-3 grid gap-2 sm:grid-cols-2"
               onSubmit={(e) => {
                 e.preventDefault();
-                const data = new FormData(e.currentTarget);
+                const form = e.currentTarget;
+                const data = Object.fromEntries(new FormData(form).entries()) as Record<string, string>;
+                const nextErrors = validateRecord(data, [
+                  { name: "spendDate", label: "Spend date", required: true },
+                  { name: "amount", label: "Amount", required: true, type: "number", min: 0 },
+                ]);
+                setSpendErrors(nextErrors);
+                if (Object.keys(nextErrors).length > 0) {
+                  requestAnimationFrame(() => focusInvalid(form));
+                  return;
+                }
                 void post(`/api/campaigns/${c.id}/spend`, {
-                  spendDate: data.get("spendDate"),
-                  amount: data.get("amount"),
-                  platform: data.get("platform"),
-                  notes: data.get("notes"),
+                  spendDate: data.spendDate,
+                  amount: data.amount,
+                  platform: data.platform,
+                  notes: data.notes,
                 });
-                e.currentTarget.reset();
+                form.reset();
+                setSpendErrors({});
               }}
             >
-              <input name="spendDate" type="date" required className="h-10 rounded-md border border-line px-3 text-sm" />
-              <input name="amount" required placeholder="Amount" className="h-10 rounded-md border border-line px-3 text-sm" />
-              <input name="platform" placeholder="Platform" className="h-10 rounded-md border border-line px-3 text-sm" />
-              <input name="notes" placeholder="Notes" className="h-10 rounded-md border border-line px-3 text-sm" />
+              <Field label="Spend date" required error={spendErrors.spendDate}>
+                <input name="spendDate" type="date" aria-invalid={Boolean(spendErrors.spendDate)} className={controlClass(Boolean(spendErrors.spendDate))} />
+              </Field>
+              <Field label="Amount" required error={spendErrors.amount}>
+                <input name="amount" placeholder="Amount" aria-invalid={Boolean(spendErrors.amount)} className={controlClass(Boolean(spendErrors.amount))} />
+              </Field>
+              <Field label="Platform">
+                <input name="platform" placeholder="Platform" className={controlClass()} />
+              </Field>
+              <Field label="Notes">
+                <input name="notes" placeholder="Notes" className={controlClass()} />
+              </Field>
               <button disabled={!!busy} className="h-9 rounded-md bg-ink text-sm text-white sm:col-span-2">
                 Add spend
               </button>
@@ -190,34 +238,21 @@ export function CampaignWorkspace({ detail, canWrite }: { detail: Detail; canWri
       <div className="mt-6 grid gap-6 xl:grid-cols-2">
         <div className="rounded-lg border border-line bg-white p-5">
           <h2 className="text-xs uppercase tracking-[0.16em] text-ink-soft">UTM</h2>
-          <table className="mt-3 w-full text-left text-sm">
-            <thead className="text-xs text-ink-soft">
-              <tr>
-                <th className="py-1 font-medium">Source</th>
-                <th className="py-1 font-medium">Medium</th>
-                <th className="py-1 font-medium">Campaign</th>
-                <th className="py-1 text-right font-medium">Leads</th>
-              </tr>
-            </thead>
-            <tbody>
-              {detail.utm.length === 0 ? (
-                <tr>
-                  <td className="py-3 text-ink-soft" colSpan={4}>
-                    No UTM values on leads yet.
-                  </td>
-                </tr>
-              ) : (
-                detail.utm.map((row, i) => (
-                  <tr key={i} className="border-t border-line">
-                    <td className="py-2">{row.source}</td>
-                    <td className="py-2">{row.medium}</td>
-                    <td className="py-2">{row.campaign}</td>
-                    <td className="py-2 text-right">{row.leads}</td>
-                  </tr>
-                ))
+          <div className="mt-3 overflow-x-auto">
+            <TableFrame
+              rows={detail.utm.map((row, i) => ({ ...row, id: String(i) }))}
+              columns={["source", "medium", "campaign", "leads"]}
+              empty="No UTM values on leads yet."
+              renderRow={(row) => (
+                <>
+                  <td className="py-2 px-3">{String(row.source)}</td>
+                  <td className="py-2 px-3">{String(row.medium)}</td>
+                  <td className="py-2 px-3">{String(row.campaign)}</td>
+                  <td className="py-2 px-3 text-right">{Number(row.leads)}</td>
+                </>
               )}
-            </tbody>
-          </table>
+            />
+          </div>
           <Link href={`/leads?campaignId=${c.id}`} className="mt-3 inline-block text-sm text-copper hover:underline">
             Open leads
           </Link>
@@ -225,39 +260,16 @@ export function CampaignWorkspace({ detail, canWrite }: { detail: Detail; canWri
 
         {canWrite ? (
           <div className="rounded-lg border border-line bg-white p-5">
-            <h2 className="text-xs uppercase tracking-[0.16em] text-ink-soft">CSV import</h2>
-            <p className="mt-2 text-xs text-ink-soft">
-              Columns: fullName, mobile, email, city. One lead per line, comma-separated. Header row optional.
+            <h2 className="text-xs uppercase tracking-[0.16em] text-ink-soft">Load leads</h2>
+            <p className="mt-2 text-sm text-ink-soft">
+              Upload a CSV on Leads so the file, assignee and duplicates stay with the calling list.
             </p>
-            <textarea
-              rows={6}
-              value={csv}
-              onChange={(e) => setCsv(e.target.value)}
-              className="mt-3 w-full rounded-md border border-line p-2 font-mono text-xs"
-              placeholder={"fullName,mobile,email,city\nAnita Shah,9876500001,anita@example.com,Pune"}
-            />
-            <button
-              type="button"
-              disabled={!!busy || !csv.trim()}
-              onClick={async () => {
-                const lines = csv.trim().split(/\r?\n/).filter(Boolean);
-                const start = lines[0].toLowerCase().includes("mobile") ? 1 : 0;
-                const rows = lines.slice(start).map((line) => {
-                  const [fullName, mobile, email, city] = line.split(",").map((p) => p.trim());
-                  return { fullName, mobile, email, city };
-                });
-                const json = await post(`/api/campaigns/${c.id}/import`, { rows });
-                if (json) {
-                  setImportResult(
-                    `${json.success} imported · ${json.duplicates} duplicates · ${json.invalid} invalid`,
-                  );
-                }
-              }}
-              className="mt-2 h-9 rounded-md bg-ink px-3 text-sm text-white disabled:opacity-50"
+            <Link
+              href={`/leads?clientId=${c.client.id}&campaignId=${c.id}&import=1`}
+              className="mt-3 inline-block text-sm text-copper hover:underline"
             >
-              Import leads
-            </button>
-            {importResult ? <p className="mt-2 text-sm text-ink-soft">{importResult}</p> : null}
+              Upload CSV for this campaign
+            </Link>
           </div>
         ) : null}
       </div>

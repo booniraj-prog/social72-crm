@@ -16,6 +16,7 @@ export function middleware(request: NextRequest) {
   if (
     pathname.startsWith("/api/auth") ||
     pathname.startsWith("/api/health") ||
+    pathname.startsWith("/api/ingest") ||
     pathname.startsWith("/_next") ||
     pathname === "/favicon.ico"
   ) {
@@ -37,7 +38,7 @@ export function middleware(request: NextRequest) {
   }
 
   if (sessionCookie && pathname === "/login") {
-    return NextResponse.redirect(new URL("/dashboard", request.url));
+    return NextResponse.redirect(new URL("/today", request.url));
   }
 
   return NextResponse.next();

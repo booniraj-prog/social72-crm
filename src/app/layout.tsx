@@ -15,8 +15,10 @@ const fraunces = Fraunces({
 });
 
 export const metadata: Metadata = {
-  title: "Social72 CRM",
-  description: "Lead operations for Social72 digital marketing and BPO",
+  title: "Social72",
+  description:
+    "Social72 CRM and project management: onboard clients, projects and employees, run ad campaigns, calling and nurture, then track POs, expenses, invoices and profit.",
+  icons: { icon: "/social72-logo.png" },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

@@ -6,6 +6,11 @@ import { normalizeMobile } from "@/lib/phone";
 import type { AuthUser } from "@/lib/rbac";
 import { canAssignLeads, canPickLeads, leadScopeWhere } from "@/lib/scope";
 import { DuplicateLeadError, HttpError } from "@/lib/session";
+import { optionalEmail, optionalId, requiredId } from "@/lib/ids";
+import { ALL_ISSUE_STATUS_KEYS, ISSUE_STATUS_KEYS, type IssueFilter } from "@/lib/lead-quality";
+import { attachLeadActive, excludePausedLeads, pausedLeadIds } from "@/lib/lead-active";
+import { STATUS_SCORE_EVENTS } from "@/lib/lead-score";
+import { ensureOpsTables } from "@/lib/ops-tables";
 import { applyScore, notify } from "@/modules/ops/service";
 import { replaceOpenFollowup } from "@/modules/followups/sync";
 
@@ -13,18 +18,23 @@ const TEMPERATURES = ["HOT", "WARM", "COLD", "UNQUALIFIED"] as const;
 
 export const leadFilterSchema = z.object({
   q: z.string().trim().optional(),
-  clientId: z.string().uuid().optional(),
-  campaignId: z.string().uuid().optional(),
-  statusId: z.string().uuid().optional(),
-  sourceId: z.string().uuid().optional(),
-  assignedUserId: z.union([z.string().uuid(), z.literal("unassigned")]).optional(),
+  clientId: optionalId,
+  campaignId: optionalId,
+  statusId: optionalId,
+  sourceId: optionalId,
+  assignedUserId: z.preprocess(
+    (value) => (value === "" || value == null ? undefined : value),
+    z.union([z.string().uuid(), z.literal("unassigned")]).optional(),
+  ),
   industryKey: z.string().trim().optional(),
   city: z.string().trim().optional(),
   state: z.string().trim().optional(),
   temperature: z.enum(TEMPERATURES).optional(),
   from: z.string().optional(),
   to: z.string().optional(),
+  issue: z.enum(["working", "dnc", "wrong", "unavailable", "unwanted", "invalid", "duplicate"]).optional(),
   minScore: z.coerce.number().int().optional(),
+  sort: z.enum(["new", "score"]).optional(),
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(200).default(50),
 });
@@ -35,32 +45,37 @@ export const createLeadSchema = z.object({
   fullName: z.string().trim().min(2).max(160).optional(),
   mobile: z.string().trim().min(8).max(20),
   alternateMobile: z.string().trim().max(20).optional().or(z.literal("")),
-  email: z.string().trim().email().optional().or(z.literal("")),
+  email: optionalEmail,
   city: z.string().trim().max(80).optional().or(z.literal("")),
   state: z.string().trim().max(80).optional().or(z.literal("")),
   pincode: z.string().trim().max(12).optional().or(z.literal("")),
   gender: z.string().trim().max(20).optional().or(z.literal("")),
   occupation: z.string().trim().max(80).optional().or(z.literal("")),
-  clientId: z.string().uuid(),
-  campaignId: z.string().uuid(),
-  sourceId: z.union([z.string().uuid(), z.literal(""), z.null()]).optional(),
+  clientId: requiredId("a client"),
+  campaignId: requiredId("a campaign"),
+  sourceId: optionalId,
   sourcePlatform: z.string().trim().max(80).optional().or(z.literal("")),
   utmSource: z.string().trim().max(80).optional().or(z.literal("")),
   utmMedium: z.string().trim().max(80).optional().or(z.literal("")),
   utmCampaign: z.string().trim().max(80).optional().or(z.literal("")),
-  assignedUserId: z.union([z.string().uuid(), z.literal(""), z.null()]).optional(),
+  assignedUserId: requiredId("an employee"),
   temperature: z.enum(TEMPERATURES).optional(),
   expectedValue: z.coerce.number().min(0).optional(),
   probabilityPct: z.coerce.number().int().min(0).max(100).optional(),
   nextAction: z.string().trim().max(200).optional().or(z.literal("")),
   nextFollowupAt: z.string().optional().or(z.literal("")),
   age: z.union([z.coerce.number().int().min(1).max(120), z.literal("")]).optional(),
+  priority: z.enum(["LOW", "MEDIUM", "HIGH", "URGENT"]).optional(),
+  captureChannel: z.string().trim().max(40).optional().or(z.literal("")),
+  serviceLine: z.string().trim().max(80).optional().or(z.literal("")),
+  adId: z.string().trim().max(80).optional().or(z.literal("")),
+  adSet: z.string().trim().max(80).optional().or(z.literal("")),
 });
 
 export const updateLeadSchema = createLeadSchema.partial().omit({ clientId: true, campaignId: true, mobile: true }).extend({
   mobile: z.string().trim().min(8).max(20).optional(),
-  clientId: z.string().uuid().optional(),
-  campaignId: z.string().uuid().optional(),
+  clientId: optionalId,
+  campaignId: optionalId,
 });
 
 const leadListInclude = {
@@ -102,33 +117,6 @@ export function serializeLead<T extends Record<string, unknown>>(lead: T) {
       out[key] = Number(v.toString());
     }
   }
-  const education = out.education;
-  if (education && typeof education === "object") {
-    const edu = { ...(education as Record<string, unknown>) };
-    for (const key of ["budget", "fee", "scholarship"] as const) {
-      const v = edu[key];
-      if (v !== undefined && v !== null && typeof v === "object" && "toString" in v) {
-        edu[key] = Number(v.toString());
-      }
-    }
-    out.education = edu;
-  }
-  const realEstate = out.realEstate;
-  if (realEstate && typeof realEstate === "object") {
-    const re = { ...(realEstate as Record<string, unknown>) };
-    for (const key of ["budget", "bookingAmount", "propertyValue"] as const) {
-      const v = re[key];
-      if (v !== undefined && v !== null && typeof v === "object" && "toString" in v) {
-        re[key] = Number(v.toString());
-      }
-    }
-    const property = re.property;
-    if (property && typeof property === "object") {
-      const prop = property as { id: string; name: string; configuration?: string | null };
-      re.property = { id: prop.id, name: prop.name, configuration: prop.configuration ?? null };
-    }
-    out.realEstate = re;
-  }
   return out;
 }
 
@@ -165,6 +153,7 @@ export async function listLeadSources() {
 }
 
 export async function listLeadStatuses() {
+  await ensureOpsTables();
   return prisma.leadStatus.findMany({
     where: { isActive: true },
     orderBy: { sortOrder: "asc" },
@@ -175,7 +164,7 @@ export async function listAssignees() {
   return prisma.user.findMany({
     where: {
       isActive: true,
-      role: { key: { in: ["bpo_executive", "bpo_leader", "crm_manager"] } },
+      role: { key: { in: ["bpo_executive", "bpo_leader", "crm_manager", "sales_manager", "marketing_manager", "project_manager"] } },
     },
     select: { id: true, name: true, email: true, role: { select: { key: true, name: true } } },
     orderBy: { name: "asc" },
@@ -223,14 +212,23 @@ export async function listLeads(actor: AuthUser, raw: Record<string, string | un
     end.setHours(23, 59, 59, 999);
     and.push({ createdAt: { lte: end } });
   }
+  if (filters.issue === "working") {
+    const paused = await pausedLeadIds();
+    and.push({ status: { key: { notIn: [...ALL_ISSUE_STATUS_KEYS] } }, duplicateOfId: null, ...excludePausedLeads(paused) });
+  } else if (filters.issue) {
+    const keys = ISSUE_STATUS_KEYS[filters.issue as Exclude<IssueFilter, "working">];
+    if (keys) and.push({ status: { key: { in: keys } } });
+  }
 
   const skip = (filters.page - 1) * filters.pageSize;
+  const orderBy: Prisma.LeadOrderByWithRelationInput[] =
+    filters.sort === "score" ? [{ leadScore: "desc" }, { createdAt: "desc" }] : [{ createdAt: "desc" }];
   const [total, leads] = await Promise.all([
     prisma.lead.count({ where }),
     prisma.lead.findMany({
       where,
       include: leadListInclude,
-      orderBy: [{ createdAt: "desc" }],
+      orderBy,
       skip,
       take: filters.pageSize,
     }),
@@ -240,7 +238,7 @@ export async function listLeads(actor: AuthUser, raw: Record<string, string | un
     total,
     page: filters.page,
     pageSize: filters.pageSize,
-    leads: leads.map((lead) => serializeLead(lead as unknown as Record<string, unknown>)),
+    leads: (await attachLeadActive(leads)).map((lead) => serializeLead(lead as unknown as Record<string, unknown>)),
   };
 }
 
@@ -276,18 +274,11 @@ async function scopedLead(actor: AuthUser, id: string) {
         take: 10,
         include: { assignee: { select: { name: true } } },
       },
-      education: true,
-      campusVisits: { orderBy: { createdAt: "desc" }, take: 20 },
-      realEstate: { include: { project: true, property: true } },
-      siteVisits: {
-        orderBy: { createdAt: "desc" },
-        take: 20,
-        include: { property: { select: { id: true, name: true } } },
-      },
     },
   });
   if (!lead) throw new HttpError(404, "Lead not found", "NOT_FOUND");
-  return lead;
+  const [hydrated] = await attachLeadActive([lead]);
+  return hydrated;
 }
 
 export async function requireLeadAccess(actor: AuthUser, id: string) {
@@ -344,10 +335,11 @@ export async function createLead(actor: AuthUser, input: z.infer<typeof createLe
     throw new HttpError(409, "A lead with this mobile already exists for the client", "DUPLICATE");
   }
 
-  const newStatus = await prisma.leadStatus.findUniqueOrThrow({ where: { key: "NEW" } });
   const assignedStatus = await prisma.leadStatus.findUniqueOrThrow({ where: { key: "ASSIGNED" } });
-  const assignedUserId = blank(data.assignedUserId as string | undefined);
-  const statusId = assignedUserId ? assignedStatus.id : newStatus.id;
+  const assignedUserId = data.assignedUserId;
+  const assigneeUser = await prisma.user.findUnique({ where: { id: assignedUserId } });
+  if (!assigneeUser?.isActive) throw new HttpError(400, "Assignee not found", "INVALID_ASSIGNEE");
+  const statusId = assignedStatus.id;
   const fullName = composeName(data.firstName, data.lastName, data.fullName);
   if (!fullName) throw new HttpError(400, "Name is required", "VALIDATION");
 
@@ -366,7 +358,7 @@ export async function createLead(actor: AuthUser, input: z.infer<typeof createLe
         sourceId: blank(data.sourceId as string | undefined),
         statusId,
         assignedUserId,
-        assignedAt: assignedUserId ? new Date() : null,
+        assignedAt: new Date(),
         createdById: actor.id,
         firstName: blank(data.firstName),
         lastName: blank(data.lastName),
@@ -392,8 +384,13 @@ export async function createLead(actor: AuthUser, input: z.infer<typeof createLe
         nextAction: blank(data.nextAction),
         nextFollowupAt: data.nextFollowupAt ? new Date(data.nextFollowupAt) : null,
         lastActivityAt: new Date(),
-        slaAssignDueAt: assignedUserId ? null : sla.slaAssignDueAt,
-        slaFirstCallDueAt: assignedUserId ? sla.slaFirstCallDueAt : null,
+        priority: data.priority ?? "MEDIUM",
+        captureChannel: blank(data.captureChannel),
+        serviceLine: blank(data.serviceLine),
+        adId: blank(data.adId),
+        adSet: blank(data.adSet),
+        slaAssignDueAt: null,
+        slaFirstCallDueAt: sla.slaFirstCallDueAt,
       },
       include: leadListInclude,
     });
@@ -408,24 +405,21 @@ export async function createLead(actor: AuthUser, input: z.infer<typeof createLe
       },
     });
 
-    if (assignedUserId) {
-      await tx.leadAssignment.create({
-        data: {
-          leadId: created.id,
-          toUserId: assignedUserId,
-          assignedBy: actor.id,
-        },
-      });
-      const assignee = await tx.user.findUnique({ where: { id: assignedUserId } });
-      await tx.activity.create({
-        data: {
-          leadId: created.id,
-          userId: actor.id,
-          type: "assigned",
-          title: `Assigned to ${assignee?.name ?? "executive"}`,
-        },
-      });
-    }
+    await tx.leadAssignment.create({
+      data: {
+        leadId: created.id,
+        toUserId: assignedUserId,
+        assignedBy: actor.id,
+      },
+    });
+    await tx.activity.create({
+      data: {
+        leadId: created.id,
+        userId: actor.id,
+        type: "assigned",
+        title: `Assigned to ${assigneeUser.name}`,
+      },
+    });
 
     return created;
   });
@@ -525,18 +519,18 @@ export async function updateLead(actor: AuthUser, id: string, input: z.infer<typ
   return serializeLead(lead as unknown as Record<string, unknown>);
 }
 
-export async function assignLead(actor: AuthUser, id: string, assignedUserId: string | null) {
+export async function assignLead(actor: AuthUser, id: string, assignedUserId: string) {
   if (!canAssignLeads(actor)) {
     throw new HttpError(403, "You cannot assign leads", "FORBIDDEN");
   }
-  const existing = await scopedLead(actor, id);
-  if (assignedUserId) {
-    const user = await prisma.user.findUnique({ where: { id: assignedUserId } });
-    if (!user?.isActive) throw new HttpError(400, "Assignee not found", "INVALID_ASSIGNEE");
+  if (!assignedUserId) {
+    throw new HttpError(400, "Every lead must stay assigned to an employee", "ASSIGNMENT_REQUIRED");
   }
+  const existing = await scopedLead(actor, id);
+  const user = await prisma.user.findUnique({ where: { id: assignedUserId } });
+  if (!user?.isActive) throw new HttpError(400, "Assignee not found", "INVALID_ASSIGNEE");
 
   const assignedStatus = await prisma.leadStatus.findUniqueOrThrow({ where: { key: "ASSIGNED" } });
-  const newStatus = await prisma.leadStatus.findUniqueOrThrow({ where: { key: "NEW" } });
   const firstCall = await prisma.slaRule.findUnique({ where: { key: "first_call" } });
 
   const lead = await prisma.$transaction(async (tx) => {
@@ -544,40 +538,30 @@ export async function assignLead(actor: AuthUser, id: string, assignedUserId: st
       where: { id },
       data: {
         assignedUserId,
-        assignedAt: assignedUserId ? new Date() : null,
-        statusId:
-          assignedUserId && existing.status.key === "NEW" ? assignedStatus.id : existing.statusId,
-        slaFirstCallDueAt: assignedUserId
-          ? new Date(Date.now() + (firstCall?.thresholdMinutes ?? 10) * 60_000)
-          : existing.slaFirstCallDueAt,
-        slaAssignDueAt: assignedUserId ? null : existing.slaAssignDueAt,
+        assignedAt: new Date(),
+        statusId: existing.status.key === "NEW" ? assignedStatus.id : existing.statusId,
+        slaFirstCallDueAt: new Date(Date.now() + (firstCall?.thresholdMinutes ?? 10) * 60_000),
+        slaAssignDueAt: null,
         lastActivityAt: new Date(),
       },
       include: leadListInclude,
     });
 
-    if (assignedUserId) {
-      await tx.leadAssignment.create({
-        data: {
-          leadId: id,
-          fromUserId: existing.assignedUserId,
-          toUserId: assignedUserId,
-          assignedBy: actor.id,
-        },
-      });
-    } else if (existing.status.key === "ASSIGNED") {
-      await tx.lead.update({ where: { id }, data: { statusId: newStatus.id } });
-    }
+    await tx.leadAssignment.create({
+      data: {
+        leadId: id,
+        fromUserId: existing.assignedUserId,
+        toUserId: assignedUserId,
+        assignedBy: actor.id,
+      },
+    });
 
-    const assignee = assignedUserId
-      ? await tx.user.findUnique({ where: { id: assignedUserId } })
-      : null;
     await tx.activity.create({
       data: {
         leadId: id,
         userId: actor.id,
-        type: assignedUserId ? "assigned" : "unassigned",
-        title: assignedUserId ? `Assigned to ${assignee?.name}` : "Unassigned",
+        type: "assigned",
+        title: `Assigned to ${user.name}`,
         body: existing.assignedUser ? `Previously ${existing.assignedUser.name}` : null,
       },
     });
@@ -587,22 +571,20 @@ export async function assignLead(actor: AuthUser, id: string, assignedUserId: st
 
   await writeAudit({
     userId: actor.id,
-    action: assignedUserId ? "lead.assigned" : "lead.unassigned",
+    action: "lead.assigned",
     entityType: "lead",
     entityId: id,
     oldValue: { assignedUserId: existing.assignedUserId },
     newValue: { assignedUserId },
   });
 
-  if (assignedUserId) {
-    await notify({
-      userId: assignedUserId,
-      type: "lead_assigned",
-      title: "New lead assigned",
-      body: existing.fullName,
-      leadId: id,
-    });
-  }
+  await notify({
+    userId: assignedUserId,
+    type: "lead_assigned",
+    title: "New lead assigned",
+    body: existing.fullName,
+    leadId: id,
+  });
 
   return serializeLead(lead as unknown as Record<string, unknown>);
 }
@@ -686,13 +668,14 @@ export async function changeStatus(actor: AuthUser, id: string, statusId: string
   const transitions = await prisma.statusTransition.findMany({
     where: { fromStatusId: existing.statusId },
   });
-  if (transitions.length > 0 && !transitions.some((t) => t.toStatusId === statusId)) {
+  const qualityMove = ALL_ISSUE_STATUS_KEYS.includes(status.key);
+  if (transitions.length > 0 && !qualityMove && !transitions.some((t) => t.toStatusId === statusId)) {
     throw new HttpError(400, "That status change is not allowed", "INVALID_TRANSITION");
   }
 
   const isWon = status.key === "CLOSED_WON";
   const isLost = status.key === "CLOSED_LOST";
-  if (!status.isFinal && !existing.nextFollowupAt) {
+  if (!status.isFinal && !qualityMove && !existing.nextFollowupAt) {
     throw new HttpError(
       400,
       "Schedule a next follow-up before leaving this lead open",
@@ -749,10 +732,8 @@ export async function changeStatus(actor: AuthUser, id: string, statusId: string
     newValue: { status: status.key, reason },
   });
 
-  if (status.key === "INTERESTED") await applyScore(id, "interested", actor.id);
-  if (status.key === "NOT_INTERESTED") await applyScore(id, "not_interested", actor.id);
-  if (status.key === "DOCUMENTATION") await applyScore(id, "documentation_started", actor.id);
-  if (status.key === "INVALID") await applyScore(id, "invalid", actor.id);
+  const scoreEvent = STATUS_SCORE_EVENTS[status.key];
+  if (scoreEvent) await applyScore(id, scoreEvent, actor.id);
   if (isWon) {
     const managers = await prisma.user.findMany({
       where: { isActive: true, role: { key: { in: ["crm_manager", "bpo_leader"] } } },
@@ -907,4 +888,71 @@ export async function createLeadWithDuplicateInfo(
     }
     throw error;
   }
+}
+
+export async function collapseDuplicateLeads(actor: AuthUser, clientId?: string) {
+  await ensureOpsTables();
+  const scope = await leadScopeWhere(actor);
+  const duplicateStatus = await prisma.leadStatus.findUnique({ where: { key: "DUPLICATE" } });
+  if (!duplicateStatus) throw new HttpError(500, "Duplicate status is missing", "MISSING_STATUS");
+
+  const leads = await prisma.lead.findMany({
+    where: {
+      AND: [scope, clientId ? { clientId } : {}, { duplicateOfId: null }],
+    },
+    select: {
+      id: true,
+      clientId: true,
+      mobileE164: true,
+      createdAt: true,
+      callAttempts: true,
+      converted: true,
+      status: { select: { isFinal: true, key: true } },
+    },
+    orderBy: { createdAt: "asc" },
+  });
+
+  const groups = new Map<string, typeof leads>();
+  for (const lead of leads) {
+    const key = `${lead.clientId}:${lead.mobileE164}`;
+    const list = groups.get(key) ?? [];
+    list.push(lead);
+    groups.set(key, list);
+  }
+
+  let collapsed = 0;
+  let groupsTouched = 0;
+  for (const group of groups.values()) {
+    if (group.length < 2) continue;
+    groupsTouched += 1;
+    const ranked = [...group].sort((a, b) => {
+      const score = (row: (typeof group)[number]) =>
+        (row.converted ? 1000 : 0) + row.callAttempts + (row.status.isFinal && row.status.key !== "DUPLICATE" ? 20 : 0);
+      const diff = score(b) - score(a);
+      if (diff !== 0) return diff;
+      return a.createdAt.getTime() - b.createdAt.getTime();
+    });
+    const keep = ranked[0];
+    const drop = ranked.slice(1);
+    for (const extra of drop) {
+      await prisma.lead.update({
+        where: { id: extra.id },
+        data: {
+          duplicateOfId: keep.id,
+          statusId: duplicateStatus.id,
+          lastActivityAt: new Date(),
+        },
+      });
+      collapsed += 1;
+    }
+  }
+
+  await writeAudit({
+    userId: actor.id,
+    action: "lead.duplicates_collapsed",
+    entityType: clientId ? "client" : "lead",
+    entityId: clientId ?? actor.id,
+    newValue: { collapsed, groupsTouched },
+  });
+  return { collapsed, groups: groupsTouched, kept: leads.length - collapsed };
 }

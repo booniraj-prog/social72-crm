@@ -11,8 +11,9 @@
     "db:migrate": "prisma migrate dev",
     "db:push": "prisma db push",
     "db:seed": "tsx prisma/seed.ts",
+    "db:demo-floor": "tsx prisma/run-demo-floor.ts",
     "db:studio": "prisma studio",
-    "test": "tsx --test src/lib/money.test.ts src/lib/csv.test.ts src/modules/insights/metrics.test.ts"
+    "test": "tsx --test src/lib/money.test.ts src/lib/csv.test.ts src/lib/meta-ingest.test.ts src/modules/insights/metrics.test.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

@@ -2,10 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { jsonError, requirePermission } from "@/lib/session";
 import { createClient, listClients } from "@/modules/clients/service";
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
     await requirePermission("client.read");
-    const clients = await listClients();
+    const industryKey = request.nextUrl.searchParams.get("industryKey") ?? undefined;
+    const clients = await listClients(industryKey || undefined);
     return NextResponse.json({ clients });
   } catch (error) {
     return jsonError(error);
