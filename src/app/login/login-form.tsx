@@ -5,7 +5,6 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Lock, Mail } from "lucide-react";
 import { authClient } from "@/lib/auth-client";
 import { controlClass, Field, FormBanner, focusInvalid, validateRecord } from "@/components/platform/form-field";
-import { ActionIcon } from "@/components/ui/action-icon";
 
 export default function LoginForm() {
   const router = useRouter();
@@ -79,7 +78,14 @@ export default function LoginForm() {
         </div>
       </Field>
       <FormBanner message={error} />
-      <ActionIcon type="submit" action="signin" disabled={loading} className="mt-2" />
+      <button
+        type="submit"
+        disabled={loading}
+        className="mt-2 inline-flex h-10 w-full items-center justify-center rounded-md px-4 text-sm font-medium text-white disabled:opacity-60"
+        style={{ background: "var(--copper)" }}
+      >
+        {loading ? "Signing in…" : "Sign in"}
+      </button>
     </form>
   );
 }

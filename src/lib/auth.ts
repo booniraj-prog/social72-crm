@@ -15,7 +15,30 @@ export const auth = betterAuth({
     expiresIn: 60 * 60 * 8,
     updateAge: 60 * 60,
   },
-  trustedOrigins: [process.env.BETTER_AUTH_URL ?? "http://localhost:3000"],
+  trustedOrigins: async (request) => {
+    const origins = new Set<string>([
+      "http://localhost:3000",
+      process.env.BETTER_AUTH_URL ?? "",
+      process.env.NEXT_PUBLIC_APP_URL ?? "",
+    ]);
+    if (request) {
+      try {
+        origins.add(new URL(request.url).origin);
+      } catch {
+        /* ignore invalid request url */
+      }
+      const origin = request.headers.get("origin");
+      if (origin) origins.add(origin);
+      const forwardedHost = request.headers.get("x-forwarded-host") ?? request.headers.get("host");
+      const forwardedProto = request.headers.get("x-forwarded-proto") ?? "https";
+      if (forwardedHost) {
+        const host = forwardedHost.split(",")[0]?.trim();
+        const proto = forwardedProto.split(",")[0]?.trim() || "https";
+        if (host) origins.add(`${proto}://${host}`);
+      }
+    }
+    return [...origins].filter(Boolean);
+  },
   plugins: [nextCookies()],
   databaseHooks: {
     session: {
