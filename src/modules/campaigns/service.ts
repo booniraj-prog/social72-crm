@@ -314,7 +314,28 @@ export async function addCampaignSpend(
 export async function importCampaignLeads(
   actor: AuthUser,
   campaignId: string,
-  rows: Array<{ fullName?: string; firstName?: string; lastName?: string; mobile?: string; email?: string; city?: string }>,
+  rows: Array<{
+    fullName?: string;
+    firstName?: string;
+    lastName?: string;
+    mobile?: string;
+    alternateMobile?: string;
+    email?: string;
+    city?: string;
+    state?: string;
+    pincode?: string;
+    gender?: string;
+    occupation?: string;
+    sourcePlatform?: string;
+    nextAction?: string;
+    utmSource?: string;
+    utmMedium?: string;
+    utmCampaign?: string;
+    adId?: string;
+    adSet?: string;
+    captureChannel?: string;
+    serviceLine?: string;
+  }>,
   extras?: { assignedUserId?: string; nextFollowupAt?: string; nextAction?: string },
 ) {
   const campaign = await prisma.campaign.findFirst({
@@ -352,14 +373,29 @@ export async function importCampaignLeads(
     try {
       await createLeadWithDuplicateInfo(actor, {
         fullName: name,
+        firstName: row.firstName ?? "",
+        lastName: row.lastName ?? "",
         mobile,
+        alternateMobile: row.alternateMobile ?? "",
         email: row.email ?? "",
         city: row.city ?? "",
+        state: row.state ?? "",
+        pincode: row.pincode ?? "",
+        gender: row.gender ?? "",
+        occupation: row.occupation ?? "",
+        sourcePlatform: row.sourcePlatform ?? "",
         clientId: campaign.clientId,
         campaignId: campaign.id,
         assignedUserId: extras?.assignedUserId || actor.id,
         nextFollowupAt: extras?.nextFollowupAt,
-        nextAction: extras?.nextAction,
+        nextAction: row.nextAction || extras?.nextAction,
+        utmSource: row.utmSource ?? "",
+        utmMedium: row.utmMedium ?? "",
+        utmCampaign: row.utmCampaign ?? "",
+        adId: row.adId ?? "",
+        adSet: row.adSet ?? "",
+        captureChannel: row.captureChannel || "csv",
+        serviceLine: row.serviceLine ?? "",
       });
       success += 1;
     } catch (error) {
@@ -385,7 +421,28 @@ export async function importClientLeads(
   input: {
     campaignId?: string;
     assignedUserId: string;
-    rows: Array<{ fullName?: string; firstName?: string; lastName?: string; mobile?: string; email?: string; city?: string }>;
+    rows: Array<{
+      fullName?: string;
+      firstName?: string;
+      lastName?: string;
+      mobile?: string;
+      alternateMobile?: string;
+      email?: string;
+      city?: string;
+      state?: string;
+      pincode?: string;
+      gender?: string;
+      occupation?: string;
+      sourcePlatform?: string;
+      nextAction?: string;
+      utmSource?: string;
+      utmMedium?: string;
+      utmCampaign?: string;
+      adId?: string;
+      adSet?: string;
+      captureChannel?: string;
+      serviceLine?: string;
+    }>;
   },
 ) {
   const client = await prisma.client.findUnique({ where: { id: clientId } });

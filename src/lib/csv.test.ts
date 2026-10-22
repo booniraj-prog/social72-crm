@@ -18,3 +18,14 @@ test("csvToLeadRows maps name and mobile headers", () => {
   assert.equal(rows[0].mobile, "9876543210");
   assert.equal(rows[0].city, "Pune");
 });
+
+test("csvToLeadRows uses an explicit column map", () => {
+  const rows = csvToLeadRows(
+    "Customer,WhatsApp No,Town,Job\nNeha,9988776655,Nashik,Doctor",
+    { fullName: "Customer", mobile: "WhatsApp No", city: "Town", occupation: "Job" },
+  );
+  assert.equal(rows[0].fullName, "Neha");
+  assert.equal(rows[0].mobile, "9988776655");
+  assert.equal(rows[0].city, "Nashik");
+  assert.equal(rows[0].occupation, "Doctor");
+});

@@ -13,7 +13,8 @@
     "db:seed": "tsx prisma/seed.ts",
     "db:demo-floor": "tsx prisma/run-demo-floor.ts",
     "db:studio": "prisma studio",
-    "test": "tsx --test src/lib/money.test.ts src/lib/csv.test.ts src/lib/meta-ingest.test.ts src/modules/insights/metrics.test.ts"
+    "test": "tsx --test src/lib/money.test.ts src/lib/csv.test.ts src/lib/meta-ingest.test.ts src/lib/ics.test.ts src/modules/insights/metrics.test.ts",
+    "pack:host": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/pack-host.ps1"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

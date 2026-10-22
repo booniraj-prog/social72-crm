@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { jsonError, requirePermission } from "@/lib/session";
 import { optionalId, requiredId } from "@/lib/ids";
-import { csvToLeadRows } from "@/lib/csv";
+import { csvToLeadRows, type LeadColumnMap } from "@/lib/csv";
 import { saveUpload } from "@/lib/uploads";
 import { importClientLeads } from "@/modules/campaigns/service";
 import { collapseDuplicateLeads } from "@/modules/leads/service";
@@ -13,8 +13,22 @@ const rowSchema = z.object({
   firstName: z.string().optional(),
   lastName: z.string().optional(),
   mobile: z.string().optional(),
+  alternateMobile: z.string().optional(),
   email: z.string().optional(),
   city: z.string().optional(),
+  state: z.string().optional(),
+  pincode: z.string().optional(),
+  gender: z.string().optional(),
+  occupation: z.string().optional(),
+  sourcePlatform: z.string().optional(),
+  nextAction: z.string().optional(),
+  utmSource: z.string().optional(),
+  utmMedium: z.string().optional(),
+  utmCampaign: z.string().optional(),
+  adId: z.string().optional(),
+  adSet: z.string().optional(),
+  captureChannel: z.string().optional(),
+  serviceLine: z.string().optional(),
 });
 
 const jsonSchema = z.object({
@@ -46,7 +60,16 @@ export async function POST(
         return NextResponse.json({ error: { message: "Choose a CSV file" } }, { status: 400 });
       }
       const saved = await saveUpload(file, "lead-imports");
-      const parsed = csvToLeadRows(await file.text()).slice(0, 500);
+      let columnMap: LeadColumnMap | undefined;
+      const rawMap = form.get("columnMap");
+      if (typeof rawMap === "string" && rawMap.trim()) {
+        try {
+          columnMap = JSON.parse(rawMap) as LeadColumnMap;
+        } catch {
+          return NextResponse.json({ error: { message: "Column map is invalid" } }, { status: 400 });
+        }
+      }
+      const parsed = csvToLeadRows(await file.text(), columnMap).slice(0, 500);
       rows = parsed;
       const doc = await createDocument(actor, {
         title: `Lead import · ${file.name}`.slice(0, 160),

@@ -11,13 +11,16 @@ export async function replaceOpenFollowup(
     actorId: string;
     dueAt: Date;
     action: string | null;
+    kind?: string | null;
+    meetUrl?: string | null;
+    location?: string | null;
   },
 ) {
   await tx.followUp.updateMany({
     where: { leadId: params.leadId, completedAt: null },
     data: { completedAt: new Date(), completedBy: params.actorId },
   });
-  await tx.followUp.create({
+  const created = await tx.followUp.create({
     data: {
       leadId: params.leadId,
       userId: params.ownerUserId,
@@ -25,6 +28,14 @@ export async function replaceOpenFollowup(
       action: params.action,
     },
   });
+  await tx.$executeRaw`
+    UPDATE follow_ups
+    SET kind = ${params.kind || "call"},
+        meet_url = ${params.meetUrl || null},
+        location = ${params.location || null}
+    WHERE id = ${created.id}
+  `;
+  return created;
 }
 
 export async function earliestOpenFollowup(tx: Tx, leadId: string) {

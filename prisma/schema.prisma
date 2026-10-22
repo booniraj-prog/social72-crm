@@ -730,6 +730,9 @@ model FollowUp {
   userId      String    @map("user_id")
   dueAt       DateTime  @map("due_at")
   action      String?
+  kind        String?
+  meetUrl     String?   @map("meet_url")
+  location    String?
   completedAt DateTime? @map("completed_at")
   completedBy String?   @map("completed_by")
   createdAt   DateTime  @default(now()) @map("created_at")

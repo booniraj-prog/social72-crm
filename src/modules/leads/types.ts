@@ -62,6 +62,9 @@ export type LeadDetail = LeadRow & {
     dueAt: string;
     action: string | null;
     completedAt: string | null;
+    kind?: string | null;
+    meetUrl?: string | null;
+    location?: string | null;
     user: { name: string };
   }>;
   tasks: Array<{ id: string; title: string; dueAt: string | null }>;

@@ -8,6 +8,14 @@ import { IssueBadge, QualityMarks, ScoreMark } from "@/components/leads/quality-
 import { ActiveToggle } from "@/components/platform/active-toggle";
 import { fromIstDatetimeLocal, toIstDatetimeLocal } from "@/lib/time";
 import { ServicePanel } from "@/components/services/service-panel";
+import {
+  GMEET_NEW,
+  TOUCH_POINTS,
+  smsHref,
+  telHref,
+  touchMessage,
+  waHref,
+} from "@/lib/touch-points";
 
 const fieldClass = "h-10 w-full rounded-md border border-line bg-white px-3 text-sm";
 
@@ -43,7 +51,31 @@ export function LeadWorkspace({
   const [reason, setReason] = useState("");
   const [followAt, setFollowAt] = useState(toIstDatetimeLocal(lead.nextFollowupAt));
   const [followAction, setFollowAction] = useState(lead.nextAction ?? "");
+  const [touchKind, setTouchKind] = useState(
+    lead.followUps.find((item) => !item.completedAt)?.kind || "call",
+  );
+  const [meetUrl, setMeetUrl] = useState(
+    lead.followUps.find((item) => !item.completedAt)?.meetUrl || "",
+  );
+  const [meetPlace, setMeetPlace] = useState(
+    lead.followUps.find((item) => !item.completedAt)?.location || "",
+  );
+  const [icsId, setIcsId] = useState(lead.followUps.find((item) => !item.completedAt)?.id ?? "");
   const [busy, setBusy] = useState("");
+  const msg = touchMessage(touchKind, lead.fullName, lead.client.name);
+  const callLink = telHref(lead.mobileE164);
+  const waLink = waHref(lead.mobileE164, msg);
+  const smsLink = smsHref(lead.mobileE164, msg);
+  const brochureHref = `/documents?clientId=${lead.client.id}`;
+
+  function downloadIcs(id: string) {
+    const a = document.createElement("a");
+    a.href = `/api/follow-ups/${id}/ics`;
+    a.download = "";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
 
   async function post(path: string, body: unknown, label: string) {
     setBusy(label);
@@ -58,12 +90,18 @@ export function LeadWorkspace({
       setBusy("");
       if (!res.ok) {
         setError(json.error?.message ?? "Action failed");
-        return;
+        return json;
+      }
+      if (typeof json.followUpId === "string") {
+        setIcsId(json.followUpId);
+        downloadIcs(json.followUpId);
       }
       router.refresh();
+      return json;
     } catch {
       setBusy("");
       setError("Could not reach the server. If the app just restarted, try again.");
+      return null;
     }
   }
 
@@ -305,6 +343,22 @@ export function LeadWorkspace({
           </Panel>
 
           <Panel title="Follow-up">
+            <select
+              value={touchKind}
+              onChange={(e) => {
+                const next = e.target.value;
+                setTouchKind(next);
+                if (next === "gmeet" && !meetUrl) setMeetUrl(GMEET_NEW);
+              }}
+              className={fieldClass}
+              aria-label="Touch point"
+            >
+              {TOUCH_POINTS.map((item) => (
+                <option key={item.key} value={item.key}>
+                  {item.label}
+                </option>
+              ))}
+            </select>
             <input
               type="datetime-local"
               value={followAt}
@@ -312,13 +366,29 @@ export function LeadWorkspace({
               className={fieldClass}
               aria-label="Next follow-up in IST"
             />
-            <p className="mt-1 text-[11px] text-ink-soft">Time is IST, not the browser timezone.</p>
+            <p className="text-[11px] text-ink-soft">Time is IST. Saving creates a calendar .ics file you can download.</p>
             <input
               value={followAction}
               onChange={(e) => setFollowAction(e.target.value)}
-              placeholder="Next action"
-              className={`${fieldClass} mt-2`}
+              placeholder="Note for this touch (optional)"
+              className={fieldClass}
             />
+            {touchKind === "gmeet" || touchKind === "meeting" ? (
+              <>
+                <input
+                  value={meetUrl}
+                  onChange={(e) => setMeetUrl(e.target.value)}
+                  placeholder="Meet URL (defaults to Google Meet new room)"
+                  className={fieldClass}
+                />
+                <input
+                  value={meetPlace}
+                  onChange={(e) => setMeetPlace(e.target.value)}
+                  placeholder="Location (office / city)"
+                  className={fieldClass}
+                />
+              </>
+            ) : null}
             <button
               type="button"
               disabled={!!busy || !followAt}
@@ -328,12 +398,53 @@ export function LeadWorkspace({
                   setError("Enter a valid follow-up date and time (IST)");
                   return;
                 }
-                post(`/api/leads/${lead.id}/followups`, { dueAt, action: followAction }, "follow");
+                post(
+                  `/api/leads/${lead.id}/followups`,
+                  {
+                    dueAt,
+                    action: followAction || undefined,
+                    kind: touchKind,
+                    meetUrl: touchKind === "gmeet" ? meetUrl || GMEET_NEW : meetUrl,
+                    location: meetPlace,
+                  },
+                  "follow",
+                );
               }}
-              className="mt-2 h-9 rounded-md bg-ink px-3 text-sm text-white disabled:opacity-50"
+              className="h-9 rounded-md bg-ink px-3 text-sm text-white disabled:opacity-50"
             >
-              Schedule follow-up
+              Schedule &amp; download ICS
             </button>
+            {icsId ? (
+              <a
+                href={`/api/follow-ups/${icsId}/ics`}
+                className="inline-flex h-9 items-center rounded-md border border-line px-3 text-sm"
+              >
+                Download calendar (.ics)
+              </a>
+            ) : null}
+            <div className="flex flex-wrap gap-2 pt-1">
+              {callLink ? (
+                <a href={callLink} className="rounded-md border border-line px-2 py-1 text-xs">
+                  Call
+                </a>
+              ) : null}
+              {waLink ? (
+                <a href={waLink} target="_blank" rel="noreferrer" className="rounded-md border border-line px-2 py-1 text-xs">
+                  WhatsApp
+                </a>
+              ) : null}
+              {smsLink ? (
+                <a href={smsLink} className="rounded-md border border-line px-2 py-1 text-xs">
+                  SMS
+                </a>
+              ) : null}
+              <a href={brochureHref} className="rounded-md border border-line px-2 py-1 text-xs">
+                Brochure / files
+              </a>
+              <a href={meetUrl || GMEET_NEW} target="_blank" rel="noreferrer" className="rounded-md border border-line px-2 py-1 text-xs">
+                Google Meet
+              </a>
+            </div>
           </Panel>
 
           {(options.nurtureTemplates?.length ?? 0) > 0 ? (

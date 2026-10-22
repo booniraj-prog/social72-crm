@@ -2,7 +2,7 @@ import { prisma } from "@/lib/db";
 import { QUALITY_STATUSES } from "@/lib/lead-quality";
 import { SCORE_RULES } from "@/lib/lead-score";
 
-const OPS_VERSION = 7;
+const OPS_VERSION = 8;
 let readyAt = 0;
 
 export async function ensureOpsTables() {
@@ -41,7 +41,9 @@ export async function ensureOpsTables() {
   `);
   await prisma.$executeRawUnsafe(`
     ALTER TABLE follow_ups
-      ADD COLUMN IF NOT EXISTS kind TEXT
+      ADD COLUMN IF NOT EXISTS kind TEXT,
+      ADD COLUMN IF NOT EXISTS meet_url TEXT,
+      ADD COLUMN IF NOT EXISTS location TEXT
   `);
   await prisma.$executeRawUnsafe(`
     CREATE TABLE IF NOT EXISTS client_contacts (

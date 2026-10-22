@@ -144,11 +144,16 @@ export function FollowUpsBoard({
                 <td className="px-4 py-3 text-ink-soft">{String(row.action)}</td>
                 <td className="px-4 py-3 text-ink-soft">{String(row.owner)}</td>
                 <td className="px-4 py-3 text-right">
-                  {bucket === "none" ? (
-                    <ActionIcon action="call" href={callHref(String(row.leadId))} />
-                  ) : (
-                    <ActionIcon action="complete" disabled={!!busyId} onClick={() => item && complete(item)} />
-                  )}
+                  <span className="inline-flex items-center justify-end gap-1">
+                    {item?.followUpId ? (
+                      <ActionIcon action="export" label="Download ICS" href={`/api/follow-ups/${item.followUpId}/ics`} />
+                    ) : null}
+                    {bucket === "none" ? (
+                      <ActionIcon action="call" href={callHref(String(row.leadId))} />
+                    ) : (
+                      <ActionIcon action="complete" disabled={!!busyId} onClick={() => item && complete(item)} />
+                    )}
+                  </span>
                 </td>
               </>
             );

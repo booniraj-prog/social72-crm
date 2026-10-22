@@ -13,6 +13,7 @@ import { STATUS_SCORE_EVENTS } from "@/lib/lead-score";
 import { ensureOpsTables } from "@/lib/ops-tables";
 import { applyScore, notify } from "@/modules/ops/service";
 import { replaceOpenFollowup } from "@/modules/followups/sync";
+import { GMEET_NEW, touchPointLabel } from "@/lib/touch-points";
 
 const TEMPERATURES = ["HOT", "WARM", "COLD", "UNQUALIFIED"] as const;
 
@@ -277,7 +278,21 @@ async function scopedLead(actor: AuthUser, id: string) {
     },
   });
   if (!lead) throw new HttpError(404, "Lead not found", "NOT_FOUND");
-  const [hydrated] = await attachLeadActive([lead]);
+  await ensureOpsTables();
+  const extras = await prisma.$queryRaw<Array<{ id: string; kind: string | null; meet_url: string | null; location: string | null }>>`
+    SELECT id, kind, meet_url, location FROM follow_ups WHERE lead_id = ${id}
+  `;
+  const extraById = new Map(extras.map((row) => [row.id, row]));
+  const followUps = lead.followUps.map((item) => {
+    const extra = extraById.get(item.id);
+    return {
+      ...item,
+      kind: extra?.kind ?? null,
+      meetUrl: extra?.meet_url ?? null,
+      location: extra?.location ?? null,
+    };
+  });
+  const [hydrated] = await attachLeadActive([{ ...lead, followUps }]);
   return hydrated;
 }
 
@@ -822,25 +837,37 @@ export async function addNote(actor: AuthUser, id: string, body: string) {
   return note;
 }
 
-export async function scheduleFollowup(actor: AuthUser, id: string, dueAt: string, action?: string) {
+export async function scheduleFollowup(
+  actor: AuthUser,
+  id: string,
+  dueAt: string,
+  action?: string,
+  extras?: { kind?: string; meetUrl?: string; location?: string },
+) {
   const existing = await scopedLead(actor, id);
   const due = new Date(dueAt);
   if (Number.isNaN(due.getTime())) throw new HttpError(400, "Invalid follow-up date", "VALIDATION");
 
   const followStatus = await prisma.leadStatus.findUnique({ where: { key: "FOLLOW_UP" } });
+  const kind = extras?.kind || "call";
+  const meetUrl = extras?.meetUrl?.trim() || (kind === "gmeet" ? GMEET_NEW : null);
+  const nextAction = action?.trim() || touchPointLabel(kind);
   const lead = await prisma.$transaction(async (tx) => {
-    await replaceOpenFollowup(tx, {
+    const followUp = await replaceOpenFollowup(tx, {
       leadId: id,
       ownerUserId: existing.assignedUserId ?? actor.id,
       actorId: actor.id,
       dueAt: due,
-      action: action || null,
+      action: nextAction,
+      kind,
+      meetUrl,
+      location: extras?.location || null,
     });
     const updated = await tx.lead.update({
       where: { id },
       data: {
         nextFollowupAt: due,
-        nextAction: action || existing.nextAction,
+        nextAction,
         followupCount: { increment: 1 },
         statusId:
           followStatus && !existing.status.isFinal ? followStatus.id : existing.statusId,
@@ -853,11 +880,11 @@ export async function scheduleFollowup(actor: AuthUser, id: string, dueAt: strin
         leadId: id,
         userId: actor.id,
         type: "followup",
-        title: "Follow-up scheduled",
-        body: due.toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }),
+        title: `${touchPointLabel(kind)} scheduled`,
+        body: `${nextAction} · ${due.toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })}`,
       },
     });
-    return updated;
+    return { updated, followUpId: followUp.id };
   });
 
   await writeAudit({
@@ -865,9 +892,12 @@ export async function scheduleFollowup(actor: AuthUser, id: string, dueAt: strin
     action: "lead.followup_created",
     entityType: "lead",
     entityId: id,
-    newValue: { dueAt },
+    newValue: { dueAt, kind },
   });
-  return serializeLead(lead as unknown as Record<string, unknown>);
+  return {
+    lead: serializeLead(lead.updated as unknown as Record<string, unknown>),
+    followUpId: lead.followUpId,
+  };
 }
 
 export async function createLeadWithDuplicateInfo(

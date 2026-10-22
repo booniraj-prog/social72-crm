@@ -18,6 +18,7 @@
 
 # production
 /build
+/social72-host.zip
 
 # env
 .env

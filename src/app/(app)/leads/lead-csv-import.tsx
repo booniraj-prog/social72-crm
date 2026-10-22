@@ -3,11 +3,19 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
-import { csvToLeadRows } from "@/lib/csv";
+import {
+  applyLeadColumnMap,
+  csvLeadTable,
+  guessLeadColumnMap,
+  LEAD_IMPORT_FIELDS,
+  type LeadColumnMap,
+  type LeadImportField,
+} from "@/lib/csv";
 import { ActionIcon } from "@/components/ui/action-icon";
 import { controlClass, Field } from "@/components/platform/form-field";
 
-const SAMPLE = "fullName,mobile,email,city\nPriya Shah,9876543210,priya@example.com,Pune\n";
+const SAMPLE =
+  "Customer Name,WhatsApp,Mail,Town,State,Job\nPriya Shah,9876543210,priya@example.com,Pune,Maharashtra,Architect\n";
 
 type Assignee = { id: string; name: string };
 type Campaign = { id: string; name: string; clientId: string };
@@ -51,11 +59,23 @@ export function LeadCsvImport({
   );
   const [assignedUserId, setAssignedUserId] = useState(defaultAssigneeId || assignees[0]?.id || "");
   const [fileName, setFileName] = useState("");
-  const [rowCount, setRowCount] = useState(0);
   const [file, setFile] = useState<File | null>(null);
+  const [headers, setHeaders] = useState<string[]>([]);
+  const [rawRows, setRawRows] = useState<string[][]>([]);
+  const [columnMap, setColumnMap] = useState<LeadColumnMap>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [summary, setSummary] = useState<Summary | null>(null);
+
+  const mappedRows = useMemo(
+    () => applyLeadColumnMap(headers, rawRows, columnMap).slice(0, 500),
+    [headers, rawRows, columnMap],
+  );
+  const rowCount = mappedRows.length;
+  const preview = mappedRows.slice(0, 3);
+  const mappedFields = LEAD_IMPORT_FIELDS.filter((field) => columnMap[field.key]);
+  const hasName = Boolean(columnMap.fullName || columnMap.firstName);
+  const hasMobile = Boolean(columnMap.mobile);
 
   const talkHref = `/calling?clientId=${clientId}`;
   const followHref = `/follow-ups?clientId=${clientId}&bucket=today`;
@@ -83,13 +103,26 @@ export function LeadCsvImport({
     if (!next) {
       setFileName("");
       setFile(null);
-      setRowCount(0);
+      setHeaders([]);
+      setRawRows([]);
+      setColumnMap({});
       return;
     }
-    const parsed = csvToLeadRows(await next.text()).slice(0, 500);
+    const table = csvLeadTable(await next.text());
     setFile(next);
     setFileName(next.name);
-    setRowCount(parsed.length);
+    setHeaders(table.headers);
+    setRawRows(table.rows.slice(0, 500));
+    setColumnMap(guessLeadColumnMap(table.headers));
+  }
+
+  function setFieldColumn(field: LeadImportField, header: string) {
+    setColumnMap((current) => {
+      const next = { ...current };
+      if (!header) delete next[field];
+      else next[field] = header;
+      return next;
+    });
   }
 
   async function importRows() {
@@ -98,7 +131,11 @@ export function LeadCsvImport({
       return;
     }
     if (!file || rowCount === 0) {
-      setError("Choose a CSV with name and mobile columns.");
+      setError("Choose a CSV file.");
+      return;
+    }
+    if (!hasName || !hasMobile) {
+      setError("Map a name column and a mobile column before importing.");
       return;
     }
     if (!assignedUserId) {
@@ -111,6 +148,7 @@ export function LeadCsvImport({
       const body = new FormData();
       body.set("assignedUserId", assignedUserId);
       if (campaignId) body.set("campaignId", campaignId);
+      body.set("columnMap", JSON.stringify(columnMap));
       body.set("file", file);
       const res = await fetch(`/api/clients/${clientId}/leads/import`, { method: "POST", body });
       const json = await res.json().catch(() => ({}));
@@ -181,7 +219,7 @@ export function LeadCsvImport({
         <div>
           <h2 className="text-xs uppercase tracking-[0.16em] text-ink-soft">Upload CSV</h2>
           <p className="mt-1 text-sm text-ink-soft">
-            Pick the client, then the campaign. Columns: name/fullName, mobile, email, city.
+            Pick the client, then map each CSV column to a CRM field so the same data is stored.
           </p>
         </div>
         <div className="flex gap-1">
@@ -232,7 +270,12 @@ export function LeadCsvImport({
       </div>
 
       <div className="mt-4 flex flex-wrap items-center gap-3">
-        <ActionIcon action="browse" label={busy ? "Importing…" : "Import leads"} disabled={busy || !file || !clientId} onClick={() => void importRows()} />
+        <ActionIcon
+          action="browse"
+          label={busy ? "Importing…" : "Import leads"}
+          disabled={busy || !file || !clientId || !hasName || !hasMobile}
+          onClick={() => void importRows()}
+        />
         {fileName ? (
           <p className="text-sm text-ink-soft">
             {fileName} · {rowCount} row{rowCount === 1 ? "" : "s"}
@@ -241,6 +284,59 @@ export function LeadCsvImport({
           <p className="text-sm text-ink-soft">Choose a .csv file first.</p>
         )}
       </div>
+
+      {headers.length > 0 ? (
+        <div className="mt-5 rounded-md border border-line bg-paper p-4">
+          <h3 className="text-xs uppercase tracking-[0.16em] text-ink-soft">Map columns</h3>
+          <p className="mt-1 text-sm text-ink-soft">
+            We guessed matches from the header names. Change any that are wrong. Name and mobile are required.
+          </p>
+          <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {LEAD_IMPORT_FIELDS.map((field) => (
+              <Field key={field.key} label={field.label} required={field.key === "mobile" || field.key === "fullName"}>
+                <select
+                  className={controlClass()}
+                  value={columnMap[field.key] ?? ""}
+                  onChange={(e) => setFieldColumn(field.key, e.target.value)}
+                >
+                  <option value="">Don&apos;t import</option>
+                  {headers.map((header) => (
+                    <option key={`${field.key}-${header}`} value={header}>
+                      {header}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            ))}
+          </div>
+          {preview.length > 0 && mappedFields.length > 0 ? (
+            <div className="mt-4 overflow-auto">
+              <table className="min-w-full text-left text-xs">
+                <thead>
+                  <tr className="text-ink-soft">
+                    {mappedFields.map((field) => (
+                      <th key={field.key} className="whitespace-nowrap px-2 py-1 font-medium">
+                        {field.label}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {preview.map((row, i) => (
+                    <tr key={i} className="border-t border-line text-ink">
+                      {mappedFields.map((field) => (
+                        <td key={field.key} className="whitespace-nowrap px-2 py-1">
+                          {row[field.key] || "—"}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
       {error ? <p className="mt-3 text-sm text-danger">{error}</p> : null}
 
